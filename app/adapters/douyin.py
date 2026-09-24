@@ -78,8 +78,10 @@ class DouyinAdapter(PlatformAdapter):
             if not product_id:
                 continue
             price = float(item.get("price", 0) or 0)
-            if price > 1000:
-                price = price / 100  # 部分接口以分计价
+            # 单位由 DOUYIN_PRICE_UNIT 显式声明；不按金额猜单位，
+            # 否则售价 >=1000 元的商品会被错算成 1/100。
+            if settings.DOUYIN_PRICE_UNIT.strip().lower() == "cent":
+                price = price / 100
             offer = Offer(
                 platform=Platform.DOUYIN,
                 platform_product_id=product_id,

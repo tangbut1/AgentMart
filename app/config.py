@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # 商品搜索接口路径：在开放平台控制台「已授权接口」中查找后填写，
     # 例如 /goodlife/v1/goods/search（团购）或电商应用对应的商品查询路径。
     DOUYIN_GOODS_SEARCH_PATH: str = ""
+    # 价格单位：yuan=接口返回元（默认，不做任何换算）/ cent=接口返回分。
+    # 不按金额大小猜测单位——猜错会让真实售价 >=1000 元的商品价格错 100 倍。
+    DOUYIN_PRICE_UNIT: str = "yuan"
 
     # ---- Bilibili ----
     BILIBILI_SESSDATA: str = ""

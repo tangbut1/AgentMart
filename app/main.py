@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from . import VERSION, ARCHITECTURE
 from .config import settings
 from .database import init_db
 from .routers import health, reviews, search, sources
@@ -50,7 +51,7 @@ app = FastAPI(
         "跨平台智能购物决策平台：多平台商品与优惠对比、可解释到手价、"
         "政策差异标注、评测观点整理与可解释推荐。"
     ),
-    version="1.0.0",
+    version=VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -85,6 +86,8 @@ app.include_router(sources.router)
 async def api_root():
     return {
         "message": "Welcome to AgentMart API",
+        "version": VERSION,
+        "architecture": ARCHITECTURE,
         "docs": "/docs",
         "endpoints": [
             "GET /api/search?keyword=",

@@ -10,9 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from typing import List, Optional
-
-from loguru import logger
+from typing import List
 
 from ..config import settings
 from ..domain.enums import (
@@ -22,7 +20,7 @@ from ..domain.enums import (
     Platform,
     ShopType,
 )
-from ..domain.models import Discount, Offer, Policy
+from ..domain.models import Discount, Offer
 from ..infra.http_client import SafeHttpClient
 from ..infra.ratelimit import rate_limiter
 from .base import PlatformAdapter

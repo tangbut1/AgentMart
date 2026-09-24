@@ -1,7 +1,6 @@
 """带 TTL 的内存缓存（可选 Redis 后端由同一接口扩展）。"""
 from __future__ import annotations
 
-import time
 from typing import Any, Optional
 
 from cachetools import TTLCache

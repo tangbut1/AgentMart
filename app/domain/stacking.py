@@ -9,7 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Dict, List, Tuple
 
-from .models import ZERO, Discount, _dec
+from .models import ZERO, Discount
 
 
 def resolve_stackable(

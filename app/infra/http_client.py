@@ -5,13 +5,20 @@ Rules enforced here (security requirement):
 - the host is resolved and checked before every request: localhost,
   loopback, private, link-local, reserved and multicast addresses are
   rejected;
-- redirects are followed manually so every hop is re-validated;
+- the connection is pinned to the IP address that was validated, so a
+  DNS answer that changes between the check and the connect (DNS
+  rebinding / TOCTOU) cannot redirect the request into the private
+  network. TLS SNI and certificate verification still use the original
+  hostname;
+- redirects are followed manually so every hop is re-validated and
+  re-pinned;
 - credentials never appear in logs (only method/host/status are logged).
 """
 from __future__ import annotations
 
 import ipaddress
 import socket
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -36,16 +43,26 @@ _BLOCKED_HOSTNAMES = {
     "metadata.google.internal", "metadata.goog",
 }
 
+# 额外的 IPv6 前缀：Python 的 ipaddress 在某些版本不把它们判为 private
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("::ffff:0:0/96"),      # IPv4-mapped IPv6
+    ipaddress.ip_network("64:ff9b::/96"),       # NAT64（可映射到 IPv4 内网）
+    ipaddress.ip_network("100::/64"),           # discard-only
+    ipaddress.ip_network("2001:db8::/32"),      # documentation
+]
+
 
 def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
-    return (
+    if (
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
-    )
+    ):
+        return True
+    return any(ip in net for net in _BLOCKED_NETWORKS)
 
 
 def _resolve_ips(host: str) -> list[str]:
@@ -56,8 +73,18 @@ def _resolve_ips(host: str) -> list[str]:
     return [info[4][0] for info in infos]
 
 
-def validate_url(url: str) -> str:
-    """校验并返回规范化 URL；不安全时抛出 UnsafeURLError。"""
+@dataclass(frozen=True)
+class PinnedTarget:
+    """一个已校验并固定 IP 的目标地址。"""
+
+    url: str          # 规范化后的原始 URL（保留原主机名）
+    host: str         # 原主机名（用于 Host 头与 SNI）
+    ip: str           # 已校验的公网 IP（实际连接目标）
+    port: int
+    scheme: str
+
+
+def _parse(url: str) -> tuple[str, str, int, str]:
     if not url or not isinstance(url, str):
         raise UnsafeURLError("URL 为空")
     parsed = urlparse(url.strip())
@@ -66,10 +93,16 @@ def validate_url(url: str) -> str:
     host = parsed.hostname
     if not host:
         raise UnsafeURLError("URL 缺少主机名")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return url.strip(), host, port, parsed.scheme
+
+
+def validate_url(url: str) -> str:
+    """校验 URL 安全性并返回规范化 URL；不安全时抛出 UnsafeURLError。"""
+    normalized, host, _, _ = _parse(url)
     if host.lower() in _BLOCKED_HOSTNAMES:
         raise UnsafeURLError(f"禁止访问内部地址: {host}")
 
-    # 主机名本身是 IP 字面量时直接判断
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
@@ -77,7 +110,7 @@ def validate_url(url: str) -> str:
     if literal is not None:
         if _ip_is_blocked(literal):
             raise UnsafeURLError(f"禁止访问内网/保留地址: {host}")
-        return url.strip()
+        return normalized
 
     for ip_str in _resolve_ips(host):
         try:
@@ -88,11 +121,60 @@ def validate_url(url: str) -> str:
             raise UnsafeURLError(
                 f"主机 {host} 解析到内网/保留地址 {ip_str}，已拒绝请求"
             )
-    return url.strip()
+    return normalized
+
+
+def resolve_and_pin(url: str) -> PinnedTarget:
+    """校验 URL，并把连接目标固定到已校验的 IP（防 DNS rebinding）。
+
+    主机名本身是 IP 字面量时直接使用；否则解析 DNS，要求所有结果均为
+    公网地址，并取第一个作为连接目标。
+    """
+    normalized, host, port, scheme = _parse(url)
+    if host.lower() in _BLOCKED_HOSTNAMES:
+        raise UnsafeURLError(f"禁止访问内部地址: {host}")
+
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _ip_is_blocked(literal):
+            raise UnsafeURLError(f"禁止访问内网/保留地址: {host}")
+        return PinnedTarget(url=normalized, host=host, ip=host, port=port, scheme=scheme)
+
+    ips: list[str] = []
+    for ip_str in _resolve_ips(host):
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if _ip_is_blocked(ip):
+            raise UnsafeURLError(
+                f"主机 {host} 解析到内网/保留地址 {ip_str}，已拒绝请求"
+            )
+        ips.append(ip_str)
+    if not ips:
+        raise UnsafeURLError(f"主机 {host} 没有可用的公网地址")
+    return PinnedTarget(url=normalized, host=host, ip=ips[0], port=port, scheme=scheme)
+
+
+def _pinned_url(target: PinnedTarget, path_and_query: str) -> str:
+    """把请求 URL 的主机名替换为已固定的 IP，保留端口与路径。"""
+    host_part = f"[{target.ip}]" if ":" in target.ip else target.ip
+    default = target.port == (443 if target.scheme == "https" else 80)
+    authority = host_part if default else f"{host_part}:{target.port}"
+    return f"{target.scheme}://{authority}{path_and_query}"
+
+
+def _host_header(target: PinnedTarget) -> str:
+    default = target.port == (443 if target.scheme == "https" else 80)
+    host_part = f"[{target.host}]" if ":" in target.host else target.host
+    return host_part if default else f"{host_part}:{target.port}"
 
 
 class SafeHttpClient:
-    """带 SSRF 校验、重试与超时的 httpx 客户端封装。"""
+    """带 SSRF 校验、IP 固定、重试与超时的 httpx 客户端封装。"""
 
     def __init__(self, timeout: Optional[float] = None, max_retries: Optional[int] = None):
         self.timeout = timeout or settings.HTTP_TIMEOUT_SECONDS
@@ -104,7 +186,7 @@ class SafeHttpClient:
         # 使我们基于 DNS 解析结果的内网地址校验被绕过，带来 SSRF 风险。
         self._client = httpx.AsyncClient(
             timeout=self.timeout,
-            follow_redirects=False,  # 手动跟随以便逐跳校验
+            follow_redirects=False,  # 手动跟随以便逐跳校验与重新固定 IP
             trust_env=False,
             headers={"User-Agent": DEFAULT_UA, "Accept": "application/json, text/plain, */*"},
         )
@@ -121,16 +203,82 @@ class SafeHttpClient:
             raise RuntimeError("SafeHttpClient 需要作为异步上下文管理器使用")
         return self._client
 
-    @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-        reraise=True,
-    )
-    async def _send(self, request: httpx.Request) -> httpx.Response:
-        host = request.url.host
-        logger.debug(f"HTTP {request.method} {host}{request.url.path}")
-        return await self.client.send(request)
+    def _build(
+        self,
+        method: str,
+        target: PinnedTarget,
+        *,
+        params: Optional[dict] = None,
+        data: Optional[dict] = None,
+        json: Optional[dict] = None,
+        headers: Optional[dict] = None,
+    ) -> httpx.Request:
+        """构造一个连接到已固定 IP、但 Host/SNI 仍为原主机名的请求。"""
+        probe = httpx.URL(target.url)
+        pinned = _pinned_url(target, probe.raw_path.decode("ascii") or "/")
+        request = self.client.build_request(
+            method,
+            pinned,
+            params=params,
+            data=data,
+            json=json,
+            headers=headers or {},
+        )
+        # httpx 会用 URL 主机名自动生成 Host 头；这里改回真实主机名，
+        # 否则基于虚拟主机/CDN 的服务会拒绝或路由到错误站点。
+        request.headers["Host"] = _host_header(target)
+        # TLS SNI 与证书校验仍使用真实主机名
+        request.extensions["sni_hostname"] = target.host
+        return request
+
+    async def _send_with_retry(self, request: httpx.Request) -> httpx.Response:
+        attempts = max(1, self.max_retries)
+
+        @retry(
+            retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+            stop=stop_after_attempt(attempts),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+            reraise=True,
+        )
+        async def _do() -> httpx.Response:
+            return await self.client.send(request)
+
+        return await _do()
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[dict] = None,
+        data: Optional[dict] = None,
+        json: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        max_redirects: int = 3,
+    ) -> httpx.Response:
+        """发起请求：校验 → 固定 IP → 手动逐跳跟随重定向（每跳重新校验）。"""
+        current = url
+        current_params = params
+        for _ in range(max_redirects + 1):
+            target = resolve_and_pin(current)
+            request = self._build(
+                method, target, params=current_params, data=data, json=json, headers=headers
+            )
+            logger.debug(f"HTTP {method} {target.host}{request.url.path}")
+            response = await self._send_with_retry(request)
+            if response.is_redirect:
+                location = response.headers.get("location", "")
+                if not location:
+                    break
+                current = validate_url(httpx.URL(current).join(location).__str__())
+                # 重定向后原始查询参数已包含在 location 中
+                current_params = None
+                data = None
+                json = None
+                continue
+            response.raise_for_status()
+            return response
+        raise httpx.TooManyRedirects("重定向次数超过限制")
 
     async def get_json(
         self,
@@ -139,38 +287,22 @@ class SafeHttpClient:
         headers: Optional[dict] = None,
         max_redirects: int = 3,
     ) -> dict:
-        safe_url = validate_url(url)
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=False,
-            trust_env=False,
-            headers={"User-Agent": DEFAULT_UA},
-        ) as client:
-            current = safe_url
-            for _ in range(max_redirects + 1):
-                resp = await client.get(current, params=params, headers=headers or {})
-                if resp.is_redirect:
-                    location = resp.headers.get("location", "")
-                    if not location:
-                        break
-                    current = validate_url(httpx.URL(current).join(location).__str__())
-                    params = None  # 重定向后参数已包含在 location 中
-                    continue
-                resp.raise_for_status()
-                return resp.json()
-        raise httpx.TooManyRedirects("重定向次数超过限制")
+        response = await self.request(
+            "GET", url, params=params, headers=headers, max_redirects=max_redirects
+        )
+        return response.json()
 
-    async def post_form(self, url: str, data: dict, headers: Optional[dict] = None) -> dict:
-        safe_url = validate_url(url)
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=False,
-            trust_env=False,
-            headers={"User-Agent": DEFAULT_UA},
-        ) as client:
-            resp = await client.post(safe_url, data=data, headers=headers or {})
-            resp.raise_for_status()
-            return resp.json()
+    async def post_form(
+        self,
+        url: str,
+        data: dict,
+        headers: Optional[dict] = None,
+        max_redirects: int = 3,
+    ) -> dict:
+        response = await self.request(
+            "POST", url, data=data, headers=headers, max_redirects=max_redirects
+        )
+        return response.json()
 
 
 DEFAULT_UA = (

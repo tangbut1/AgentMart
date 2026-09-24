@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..adapters import registry
 from ..adapters.base import AdapterResult
-from ..adapters.demo import demo_offers, demo_reviews
+from ..adapters.demo import demo_offers
 from ..domain.enums import DataStatus, Platform
 from ..domain.matching import group_offers
 from ..domain.models import (
@@ -307,7 +307,6 @@ async def search_products(
     keyword: str,
     include_demo: bool = False,
     platforms: Optional[Sequence[Platform]] = None,
-    session: Optional[AsyncSession] = None,
 ) -> SearchResponse:
     keyword = keyword.strip()
     cache_key = f"search:{keyword}:{include_demo}:{','.join(p.value for p in platforms) if platforms else 'all'}"
@@ -391,9 +390,7 @@ async def get_product_detail(
     preferences: Optional[UserPreferences] = None,
     session: Optional[AsyncSession] = None,
 ) -> Tuple[Optional[CanonicalProductOut], Optional[RecommendationOut], List[ReviewOut], bool]:
-    search = await search_products(
-        keyword, include_demo=include_demo, session=session
-    )
+    search = await search_products(keyword, include_demo=include_demo)
     group_out = next((g for g in search.groups if g.id == group_id), None)
     if group_out is None:
         return None, None, [], search.demo_included
@@ -423,7 +420,6 @@ async def get_product_detail(
 
 async def _rebuild_domain_group(search: SearchResponse, group_id: str):
     """从搜索结果反构 domain CanonicalProduct（用于推荐计算）。"""
-    from ..domain.enums import DataStatus as _DS
     from ..domain.models import CanonicalProduct, Offer, Discount, Policy
 
     group_out = next((g for g in search.groups if g.id == group_id), None)
@@ -527,9 +523,7 @@ async def compare_products(
     preferences: Optional[UserPreferences] = None,
     session: Optional[AsyncSession] = None,
 ) -> CompareResponse:
-    search = await search_products(
-        keyword, include_demo=include_demo, session=session
-    )
+    search = await search_products(keyword, include_demo=include_demo)
     response = CompareResponse(has_real_data=search.has_real_data)
     for group_id in group_ids:
         group_out = next((g for g in search.groups if g.id == group_id), None)

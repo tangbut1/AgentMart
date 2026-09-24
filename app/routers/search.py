@@ -12,7 +12,6 @@ from ..schemas import (
     CompareRequest,
     CompareResponse,
     ProductDetailResponse,
-    RecommendationPreferences,
     SearchResponse,
 )
 from ..services import search_service
@@ -25,11 +24,8 @@ async def search(
     keyword: str = Query(..., min_length=1, max_length=200,
                          description="商品名称、型号或商品链接"),
     include_demo: bool = Query(False, description="是否包含演示数据（虚构）"),
-    session: AsyncSession = Depends(get_session),
 ) -> SearchResponse:
-    return await search_service.search_products(
-        keyword, include_demo=include_demo, session=session
-    )
+    return await search_service.search_products(keyword, include_demo=include_demo)
 
 
 @router.get("/products/detail", response_model=ProductDetailResponse,

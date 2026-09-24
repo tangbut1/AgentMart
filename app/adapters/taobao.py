@@ -9,11 +9,8 @@ API: https://eco.taobao.com/router/rest  (method: taobao.tbk.dg.item.get)
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime
 from typing import List
-
-from loguru import logger
 
 from ..config import settings
 from ..domain.enums import (
@@ -72,11 +69,10 @@ class TaobaoBaseAdapter(PlatformAdapter):
         return self._parse(data)
 
     def _shop_type(self, item: dict) -> ShopType:
-        # user_type: 0 淘宝 / 1 天猫；shop_type 字段需联盟权限才返回
+        # user_type: 0 淘宝 / 1 天猫；shop_type 字段需联盟权限才返回。
+        # 仅依据接口明确返回的字段判定店铺类型，不用店名猜测——
+        # 店名里的「旗舰店」不等于平台认证的官方旗舰店。
         user_type = item.get("user_type")
-        shop_title = item.get("shop_title", "") or ""
-        if "旗舰店" in shop_title and "官方" in shop_title:
-            return ShopType.OFFICIAL_FLAGSHIP
         if user_type == 1:
             return ShopType.FLAGSHIP
         if user_type == 0:
