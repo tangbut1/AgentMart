@@ -275,6 +275,23 @@ export interface ModeInfo {
   data_note: string;
 }
 
+export type LoginStateCode =
+  | "logged_in"
+  | "waiting_login"
+  | "saved_unverified"
+  | "failed"
+  | "none";
+
+export interface LoginWindowView {
+  group: string;
+  platforms: BrowserPlatform[];
+  status: string;
+  status_label: string;
+  message: string;
+  opened_at: string | null;
+  last_checked_at: string | null;
+}
+
 export interface RecipeView {
   platform: BrowserPlatform;
   display_name: string;
@@ -284,6 +301,10 @@ export interface RecipeView {
   profile_group: string;
   profile_platforms: BrowserPlatform[];
   profile_exists: boolean;
+  /** 诚实登录态：目录存在不等于已登录 */
+  login_state: LoginStateCode;
+  login_state_label: string;
+  login_window: LoginWindowView;
 }
 
 export interface ProfileView {
@@ -304,6 +325,7 @@ export interface PlatformStatusView {
   profiles: ProfileView[];
   storage: { root: string; note: string; inside_repo: boolean };
   sessions: SessionView[];
+  login_windows: LoginWindowView[];
 }
 
 export interface ModelConfigView {
@@ -388,6 +410,26 @@ export const browserApi = {
 
   platformStatus(signal?: AbortSignal) {
     return request<PlatformStatusView>(`${BASE}/platforms`, { signal });
+  },
+
+  openLogin(group: string) {
+    return request<{
+      group: string;
+      status: string;
+      status_label: string;
+      message: string;
+      platforms: BrowserPlatform[];
+      boundaries: string[];
+    }>(`${BASE}/platforms/${encodeURIComponent(group)}/login`, {
+      method: "POST",
+    });
+  },
+
+  closeLogin(group: string) {
+    return request<{ group: string; closed: boolean; message: string }>(
+      `${BASE}/platforms/${encodeURIComponent(group)}/login/close`,
+      { method: "POST" },
+    );
   },
 
   clearProfile(group: string) {

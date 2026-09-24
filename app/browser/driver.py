@@ -71,7 +71,9 @@ class PlaywrightDriver:
             slow_mo=self.config.slow_mo_ms,
             viewport=self.config.viewport,
             user_agent=self.config.user_agent,
-            args=["--disable-blink-features=AutomationControlled"],
+            # 刻意不传 --disable-blink-features=AutomationControlled：
+            # 那会抹掉 navigator.webdriver，属于"隐藏自动化身份"，
+            # 与产品的安全边界冲突。宁可被平台识别出来，也不做规避。
         )
         pages = self._context.pages
         self._page = pages[0] if pages else await self._context.new_page()

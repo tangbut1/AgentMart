@@ -30,6 +30,13 @@ const EMPTY_FORM: ModelForm = {
   note: "",
 };
 
+function loginTone(state?: string): "ok" | "warn" | "muted" | "danger" {
+  if (state === "logged_in") return "ok";
+  if (state === "waiting_login" || state === "failed") return "warn";
+  if (state === "saved_unverified") return "muted";
+  return "warn";
+}
+
 export default function BrowserSettingsPage() {
   const [tab, setTab] = useState<"platforms" | "model">("platforms");
   const [status, setStatus] = useState<PlatformStatusView | null>(null);
@@ -38,6 +45,8 @@ export default function BrowserSettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 正在操作哪个登录组（打开/关闭登录窗口/清除登录态）
+  const [busyGroup, setBusyGroup] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ModelTestView | null>(null);
 
@@ -63,9 +72,20 @@ export default function BrowserSettingsPage() {
 
   useEffect(reload, [reload]);
 
+  // 有登录窗口开着时勤一点刷新，让用户一登完就看到「已登录」
+  const hasOpenWindow = (status?.login_windows ?? []).some((w) =>
+    ["opening", "waiting_login", "logged_in"].includes(w.status),
+  );
+  useEffect(() => {
+    if (!hasOpenWindow) return undefined;
+    const timer = window.setInterval(reload, 2500);
+    return () => window.clearInterval(timer);
+  }, [hasOpenWindow, reload]);
+
   const clearProfile = useCallback(
     async (group: string) => {
       setBusy(true);
+      setBusyGroup(group);
       setError(null);
       try {
         const res = await browserApi.clearProfile(group);
@@ -75,6 +95,48 @@ export default function BrowserSettingsPage() {
         setError(exc instanceof Error ? exc.message : "清除失败");
       } finally {
         setBusy(false);
+        setBusyGroup(null);
+      }
+    },
+    [reload],
+  );
+
+  const openLogin = useCallback(
+    async (group: string) => {
+      setBusy(true);
+      setBusyGroup(group);
+      setError(null);
+      setMessage(null);
+      try {
+        const res = await browserApi.openLogin(group);
+        setMessage(
+          `已弹出浏览器窗口：${res.message} 请在那个窗口里自己完成登录或扫码。`,
+        );
+        reload();
+      } catch (exc) {
+        setError(exc instanceof Error ? exc.message : "打开登录窗口失败");
+      } finally {
+        setBusy(false);
+        setBusyGroup(null);
+      }
+    },
+    [reload],
+  );
+
+  const closeLogin = useCallback(
+    async (group: string) => {
+      setBusy(true);
+      setBusyGroup(group);
+      setError(null);
+      try {
+        const res = await browserApi.closeLogin(group);
+        setMessage(res.message);
+        reload();
+      } catch (exc) {
+        setError(exc instanceof Error ? exc.message : "关闭登录窗口失败");
+      } finally {
+        setBusy(false);
+        setBusyGroup(null);
       }
     },
     [reload],
@@ -177,6 +239,16 @@ export default function BrowserSettingsPage() {
                   {status ? status.storage.root : "读取中…"}
                 </span>
               </h2>
+              <div className="panel__actions">
+                <button
+                  type="button"
+                  className="btn btn--secondary btn--sm"
+                  onClick={reload}
+                  disabled={busy}
+                >
+                  刷新状态
+                </button>
+              </div>
             </div>
             <div className="panel__body stack gap-12">
               <p className="small">{status?.storage.note}</p>
@@ -186,49 +258,88 @@ export default function BrowserSettingsPage() {
                     <tr>
                       <th>登录组</th>
                       <th>覆盖平台</th>
-                      <th>状态</th>
+                      <th>登录态</th>
                       <th>目录</th>
                       <th>操作</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(status?.profiles ?? []).map((profile) => (
-                      <tr key={profile.group}>
-                        <td className="table-cell-main" data-label="登录组">
-                          {profile.group}
-                        </td>
-                        <td data-label="覆盖平台">
-                          {profile.platforms
-                            .map((p) => PLATFORM_LABEL[p] ?? p)
-                            .join("、")}
-                        </td>
-                        <td data-label="状态">
-                          {profile.exists ? (
-                            <Badge tone="ok" dot>
-                              已保存登录态
+                    {(status?.profiles ?? []).map((profile) => {
+                      const window = status?.login_windows.find(
+                        (w) => w.group === profile.group,
+                      );
+                      const windowOpen =
+                        window !== undefined &&
+                        ["opening", "waiting_login", "logged_in"].includes(window.status);
+                      const recipe = status?.recipes.find(
+                        (r) => r.profile_group === profile.group,
+                      );
+                      const thisBusy = busy && busyGroup === profile.group;
+                      return (
+                        <tr key={profile.group}>
+                          <td className="table-cell-main" data-label="登录组">
+                            {profile.group}
+                          </td>
+                          <td data-label="覆盖平台">
+                            {profile.platforms
+                              .map((p) => PLATFORM_LABEL[p] ?? p)
+                              .join("、")}
+                          </td>
+                          <td data-label="登录态">
+                            <Badge tone={loginTone(recipe?.login_state)} dot>
+                              {recipe?.login_state_label ?? "读取中…"}
                             </Badge>
-                          ) : (
-                            <Badge tone="muted">空</Badge>
-                          )}
-                        </td>
-                        <td className="small muted mono" data-label="目录">
-                          {profile.directory}
-                        </td>
-                        <td data-label="操作">
-                          <button
-                            type="button"
-                            className="btn btn--ghost btn--sm"
-                            disabled={busy || !profile.exists}
-                            onClick={() => clearProfile(profile.group)}
-                          >
-                            清除登录态
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                            {windowOpen && window.message && (
+                              <div className="muted small" style={{ marginTop: 4 }}>
+                                {window.message}
+                              </div>
+                            )}
+                          </td>
+                          <td className="small muted mono" data-label="目录">
+                            {profile.directory}
+                          </td>
+                          <td data-label="操作">
+                            <div className="row gap-8 wrap">
+                              {windowOpen ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--secondary btn--sm"
+                                  disabled={thisBusy}
+                                  onClick={() => closeLogin(profile.group)}
+                                >
+                                  关闭窗口
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn--primary btn--sm"
+                                  disabled={thisBusy}
+                                  onClick={() => openLogin(profile.group)}
+                                >
+                                  登录
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn--ghost btn--sm"
+                                disabled={busy || !profile.exists}
+                                onClick={() => clearProfile(profile.group)}
+                              >
+                                清除登录态
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+              <Notice tone="info" title="「登录」会弹出一个你能看见的浏览器窗口">
+                账号密码、短信验证码都由你本人在那个窗口里的官方页面输入。
+                我只每隔几秒探测一次「是否已登录」，不读你的账号、不读 cookie、
+                也不碰任何输入框。登录窗口开着时，对应平台不会自动开始比价，避免两个窗口抢同一个目录。
+              </Notice>
               <Notice tone="warn" title="关于淘宝与天猫">
                 两者在国内是同一套账号体系，因此共用同一个浏览器目录（也就是同一次登录）。
                 但商品来源、店铺和结果在任务里仍然分开记录，不会混为一谈。

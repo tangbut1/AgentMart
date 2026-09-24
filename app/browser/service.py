@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..domain.enums import Platform
@@ -15,8 +16,27 @@ from .agent import AgentTask, ShoppingAgent, TaskOptions, agent as default_agent
 from .agent import parse_requirement
 from .enums import DataOrigin
 from .llm import ModelError, delete_config, load_config, save_config
-from .profiles import all_profiles, delete_profile, describe_storage
+from .login import LoginUnavailable
+from .profiles import all_profiles, delete_profile, describe_storage, platforms_for_group
 from . import store
+
+
+def _login_state(profile_exists: bool, window: dict) -> tuple:
+    """把「目录存在」和「登录窗口探测结果」合成一个诚实的状态。
+
+    目录存在只说明这个平台开过浏览器，不代表登进去了——之前界面把它
+    显示成「已登录」是会误导人的，这里分开。
+    """
+    status = window.get("status")
+    if status == "logged_in":
+        return "logged_in", "已登录"
+    if status in ("opening", "waiting_login"):
+        return "waiting_login", "等待你登录"
+    if status == "failed":
+        return "failed", "窗口打开失败"
+    if profile_exists:
+        return "saved_unverified", "有登录态，未验证"
+    return "none", "未登录"
 
 
 class BrowserService:
@@ -93,11 +113,25 @@ class BrowserService:
 
     # ---- 平台与登录态 ----
     def platform_status(self) -> Dict[str, Any]:
+        login_windows = {
+            item["group"]: item for item in self.agent.login_window_status()
+        }
+        recipes = []
+        for platform in Platform:
+            summary = recipe_summary(platform)
+            group = summary["profile_group"]
+            window = login_windows.get(group) or {}
+            state, label = _login_state(summary["profile_exists"], window)
+            summary["login_state"] = state
+            summary["login_state_label"] = label
+            summary["login_window"] = window
+            recipes.append(summary)
         return {
-            "recipes": [recipe_summary(p) for p in Platform],
+            "recipes": recipes,
             "profiles": [info.to_dict() for info in all_profiles()],
             "storage": describe_storage(),
             "sessions": self.agent.session_status(),
+            "login_windows": list(login_windows.values()),
         }
 
     def clear_profile(self, group: str) -> Dict[str, Any]:
@@ -109,6 +143,28 @@ class BrowserService:
             if removed
             else "该平台没有已保存的登录状态",
         }
+
+    async def open_login(self, group: str) -> Dict[str, Any]:
+        """弹出可见浏览器窗口，请用户本人登录。"""
+        try:
+            session = await self.agent.open_login_window(group)
+        except LoginUnavailable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "group": session.group,
+            "status": session.status,
+            "status_label": session.status_label,
+            "message": session.message,
+            "platforms": [p.value for p in platforms_for_group(session.group)],
+            "boundaries": [
+                "账号密码、短信验证码都由你本人在这个窗口里输入，我不代填、不记录",
+                "登录态只保存在本机这个平台的浏览器目录里，删除目录即清除",
+                "登录窗口和比价任务对同一个平台互斥，窗口开着时该平台不会自动开始",
+            ],
+        }
+
+    async def close_login(self, group: str) -> Dict[str, Any]:
+        return await self.agent.close_login_window(group)
 
     # ---- 需求解析 ----
     def parse(self, text: str) -> Dict[str, Any]:

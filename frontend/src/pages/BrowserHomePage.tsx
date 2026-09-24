@@ -20,6 +20,13 @@ const EXAMPLES = [
 
 type Mode = "browser" | "api";
 
+function loginTone(state?: string): "ok" | "warn" | "muted" | "danger" {
+  if (state === "logged_in") return "ok";
+  if (state === "waiting_login" || state === "failed") return "warn";
+  if (state === "saved_unverified") return "muted";
+  return "warn";
+}
+
 export default function BrowserHomePage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("browser");
@@ -31,14 +38,74 @@ export default function BrowserHomePage() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 正在操作的平台组（打开/关闭登录窗口），用于禁用按钮
+  const [loginBusy, setLoginBusy] = useState<string | null>(null);
+  // 登录窗口的操作结果（成功也用这个显示，不用 error）
+  const [loginNote, setLoginNote] = useState<string | null>(null);
+
+  const reloadStatus = useCallback((signal?: AbortSignal) => {
+    return browserApi
+      .platformStatus(signal)
+      .then(setStatus)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     browserApi.mode(controller.signal).then(setInfo).catch(() => undefined);
-    browserApi.platformStatus(controller.signal).then(setStatus).catch(() => undefined);
+    reloadStatus(controller.signal);
     browserApi.listTasks(8).then(setTasks).catch(() => undefined);
     return () => controller.abort();
-  }, []);
+  }, [reloadStatus]);
+
+  // 有登录窗口开着时勤一点刷新，让用户一登完就看到「已登录」
+  const hasOpenWindow = (status?.login_windows ?? []).some((w) =>
+    ["opening", "waiting_login", "logged_in"].includes(w.status),
+  );
+  useEffect(() => {
+    if (!hasOpenWindow) return undefined;
+    const timer = window.setInterval(() => reloadStatus(), 2500);
+    return () => window.clearInterval(timer);
+  }, [hasOpenWindow, reloadStatus]);
+
+  const openLogin = useCallback(
+    async (group: string) => {
+      setLoginBusy(group);
+      setError(null);
+      setLoginNote(null);
+      try {
+        const result = await browserApi.openLogin(group);
+        setLoginNote(
+          `已弹出浏览器窗口：${result.message} 请在那个窗口里自己完成登录或扫码，` +
+            "登好后这里会显示「已登录」。",
+        );
+        await reloadStatus();
+      } catch (exc) {
+        setError(exc instanceof Error ? exc.message : "打开登录窗口失败");
+      } finally {
+        setLoginBusy(null);
+      }
+    },
+    [reloadStatus],
+  );
+
+  const closeLogin = useCallback(
+    async (group: string) => {
+      setLoginBusy(group);
+      setError(null);
+      setLoginNote(null);
+      try {
+        const result = await browserApi.closeLogin(group);
+        setLoginNote(result.message);
+        await reloadStatus();
+      } catch (exc) {
+        setError(exc instanceof Error ? exc.message : "关闭登录窗口失败");
+      } finally {
+        setLoginBusy(null);
+      }
+    },
+    [reloadStatus],
+  );
 
   const togglePlatform = useCallback((platform: BrowserPlatform) => {
     setPlatforms((prev) =>
@@ -72,7 +139,9 @@ export default function BrowserHomePage() {
     }
   }, [text, platforms, maxCandidates, navigate]);
 
-  const missingLogin = (status?.profiles ?? []).filter((p) => !p.exists);
+  const notLoggedIn = (status?.recipes ?? []).filter(
+    (r) => r.login_state !== "logged_in" && r.login_state !== "waiting_login",
+  );
 
   return (
     <div className="stack gap-24">
@@ -257,21 +326,22 @@ export default function BrowserHomePage() {
           <section className="panel">
             <div className="panel__head">
               <span style={{ color: "var(--primary)" }}>
-                <Icon name="clock" size={18} />
+                <Icon name="shield" size={18} />
               </span>
               <h2 className="section-title">
-                浏览器登录状态
+                第一步：在各平台登录你自己的账号
                 <span className="section-note">
-                  登录信息只保存在本机 {status ? status.storage.root : "用户目录"}，不在仓库里
+                  账号密码由你本人在官方页面输入，我不代填、不记录
                 </span>
               </h2>
               <div className="panel__actions">
                 <button
                   type="button"
                   className="btn btn--secondary btn--sm"
-                  onClick={() => navigate("/browser/settings")}
+                  onClick={() => reloadStatus()}
+                  disabled={loginBusy !== null}
                 >
-                  管理平台与模型
+                  刷新状态
                 </button>
               </div>
             </div>
@@ -283,15 +353,20 @@ export default function BrowserHomePage() {
                       <th>平台</th>
                       <th>登录态</th>
                       <th>取价是否需要登录</th>
+                      <th>操作</th>
                       <th>说明</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ALL_PLATFORMS.map((platform) => {
                       const recipe = status?.recipes.find((r) => r.platform === platform);
-                      const profile = status?.profiles.find(
-                        (p) => p.group === recipe?.profile_group,
-                      );
+                      const group = recipe?.profile_group ?? platform;
+                      const window = recipe?.login_window;
+                      const windowOpen =
+                        window !== undefined &&
+                        window.status !== "idle" &&
+                        ["opening", "waiting_login", "logged_in"].includes(window.status);
+                      const busy = loginBusy === group;
                       return (
                         <tr key={platform}>
                           <td className="table-cell-main" data-label="平台">
@@ -299,18 +374,41 @@ export default function BrowserHomePage() {
                             {PLATFORM_LABEL[platform]}
                           </td>
                           <td data-label="登录态">
-                            {profile?.exists ? (
-                              <Badge tone="ok" dot>
-                                已登录
-                              </Badge>
-                            ) : (
-                              <Badge tone="warn" dot>
-                                未登录
-                              </Badge>
+                            <Badge
+                              tone={loginTone(recipe?.login_state)}
+                              dot
+                            >
+                              {recipe?.login_state_label ?? "读取中…"}
+                            </Badge>
+                            {windowOpen && window.message && (
+                              <div className="muted small" style={{ marginTop: 4 }}>
+                                {window.message}
+                              </div>
                             )}
                           </td>
                           <td data-label="取价是否需要登录">
                             {recipe?.requires_login_for_price ? "需要" : "不强制"}
+                          </td>
+                          <td data-label="操作">
+                            {windowOpen ? (
+                              <button
+                                type="button"
+                                className="btn btn--secondary btn--sm"
+                                onClick={() => closeLogin(group)}
+                                disabled={busy}
+                              >
+                                {busy ? "处理中…" : "关闭窗口"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn btn--primary btn--sm"
+                                onClick={() => openLogin(group)}
+                                disabled={busy}
+                              >
+                                {busy ? "正在打开…" : "登录"}
+                              </button>
+                            )}
                           </td>
                           <td className="muted small" data-label="说明">
                             {recipe ? recipe.notes : "读取中…"}
@@ -321,11 +419,13 @@ export default function BrowserHomePage() {
                   </tbody>
                 </table>
               </div>
-              {missingLogin.length > 0 && (
-                <Notice tone="warn" title="还没有登录态">
-                  {missingLogin.map((p) => p.group).join("、")}{" "}
-                  尚未登录。任务运行到这些平台时会弹出一个可见的浏览器窗口，请你在官方页面
-                  自己完成登录或扫码；我不会代填账号密码，也不会记录验证码。
+              {loginNote && <Notice tone="info">{loginNote}</Notice>}
+              {notLoggedIn.length > 0 && (
+                <Notice tone="warn" title="这些平台还没登录">
+                  {notLoggedIn.map((r) => r.display_name).join("、")}{" "}
+                  还没有可用的登录态。点右边的「登录」会弹出一个可见的浏览器窗口，
+                  请你在官方页面自己完成登录或扫码；我不会代填账号密码，也不会记录验证码。
+                  登录窗口开着的时候，对应平台不会自动开始比价。
                 </Notice>
               )}
             </div>

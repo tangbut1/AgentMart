@@ -33,6 +33,7 @@ app/browser/
   fixtures.py      本地受控测试页（ThreadingHTTPServer，仅供测试）
   llm.py           自带 Key 的模型客户端：连接测试、视觉能力探测、用量与费用估算
   agent.py         编排器：状态机、五平台并发、预算/步数上限、取消、等待用户接管
+  login.py         手动登录窗口：可见浏览器 + 只读登录探测，与任务对同一登录组互斥
   store.py         任务快照落库（SQLite），重启后可回读
   serialize.py     Offer / 价格拆解 / 确定性的 JSON 序列化
   service.py       应用服务层（被 routers/browser.py 调用）
@@ -127,6 +128,36 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
   `POST /api/browser/platforms/{group}/clear`；删除的是整个浏览器目录；
 - 每次任务默认弹出**可见**窗口，你可以随时看着它在做什么；也可以设为无头（仅在你已登录且只想看结果时）。
 
+### 跑任务之前，先在这个窗口里登录
+
+比价任务默认无头运行、不能让你输账号，所以要先单独开一个登录窗口：
+
+- 入口：首页或设置页 → 平台表格里的「登录」按钮，或
+  `POST /api/browser/platforms/{group}/login`；
+- 弹出的窗口是**可见**的普通 Chromium，直接停在该平台首页，
+  账号密码、短信验证码、扫码都由你本人在这个窗口里完成；
+- Agent 每 2 秒只探测一次「是否已登录」（一段只读 DOM 的脚本），
+  **不读取、不保存、不上传你的账号、cookie、验证码和任何输入框内容**；
+- 探测到已登录后窗口**不会**自动关，留给你自己关；
+- 关窗口只是关浏览器，`~/.agentmart/browser-profiles/<组>/` 里的登录态保留，之后的比价任务直接复用。
+
+登录态在界面上分五档如实显示，不把「目录存在」说成「已登录」：
+
+| 状态 | 含义 |
+| --- | --- |
+| `none` | 这个组还没有任何登录态目录 |
+| `saved_unverified` | 目录在，但本次没有探测到登录（可能已过期） |
+| `waiting_login` | 登录窗口正开着，等你登录 |
+| `logged_in` | 登录窗口里探测到已登录 |
+| `failed` | 探测脚本本身出错 |
+
+**互斥**：同一个登录组同时只能有一个 Chromium 持久化上下文。
+登录窗口开着时该组不能开始比价任务（提示你「先完成登录并关掉窗口」）；
+比价任务正占用该组时也打不开登录窗口。这是浏览器层面的限制，
+代码里两边都做了显式检查和提示，不会出现两个进程抢同一个目录。
+任务结束（完成/受限/失败/取消）时会主动收掉该组浏览器会话并释放目录，
+不会出现"任务已经跑完，登录按钮还点不动"。
+
 ---
 
 ## 7. 自带模型（BYO Key）
@@ -165,7 +196,7 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
 ## 10. 测试怎么跑、覆盖了什么
 
 ```bash
-python -m pytest                       # 122 passed（含 2 个真实 Chromium 端到端用例）
+python -m pytest                       # 142 passed（含 2 个真实 Chromium 端到端用例）
 cd frontend && npm run build           # tsc --noEmit && vite build
 ```
 
@@ -178,6 +209,12 @@ cd frontend && npm run build           # tsc --noEmit && vite build
 - 取消任务、预算耗尽都能安全停下并保留已取得的证据；
 - 任务取消/结束后结果落库，服务重启后从库里回读（`restored` 标记，只能看不能继续跑）；
 - 拼错 `/api/*` 返回 JSON 404，不会回退成 200 + 前端页面而让调用方误判成成功；
+- 「要不要加入专业评测分析」只问一次：回答之后任务必须往下跑，不能又被问一遍
+  （这个 bug 的真实表现是任务永远卡在第 2 步，一次都跑不起来，见
+  `tests/test_browser_review_question.py`）；
+- 登录窗口与比价任务对同一登录组互斥（两个方向都有用例）；
+- 任务结束后浏览器会话被收掉、目录被释放，不会挡住之后的登录窗口；
+- 登录探测脚本里不允许出现读 cookie / 输入框 / 密码的写法；
 - 没有任何自动下单/付款路径。
 
 端到端用例用 `app/browser/fixtures.py` 起的本地受控页面 + 真实 Chromium，

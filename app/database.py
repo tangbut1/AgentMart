@@ -99,7 +99,11 @@ async def init_db() -> None:
 # 本地 SQLite 没有迁移工具，新增列时由这里补齐（列名写死在代码里，
 # 不涉及任何外部输入）。生产环境建议改用 Alembic。
 _ADDED_COLUMNS = {
-    "browser_tasks": (("requirement", "TEXT DEFAULT ''"),),
+    "browser_tasks": (
+        ("requirement", "TEXT DEFAULT ''"),
+        ("waiting_reason", "TEXT DEFAULT ''"),
+        ("pending_question", "TEXT DEFAULT ''"),
+    ),
 }
 
 

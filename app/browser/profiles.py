@@ -15,7 +15,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from ..domain.enums import Platform
 
@@ -53,6 +53,14 @@ _PROFILE_GROUP: Dict[Platform, str] = {
 
 def profile_group(platform: Platform) -> str:
     return _PROFILE_GROUP[platform]
+
+
+def platforms_for_group(group: str) -> List[Platform]:
+    """组内平台（淘宝/天猫同组）。组名不认识时抛 KeyError。"""
+    members = [p for p, g in _PROFILE_GROUP.items() if g == group]
+    if not members:
+        raise KeyError(group)
+    return members
 
 
 def profile_dir(group: str) -> Path:

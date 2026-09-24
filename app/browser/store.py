@@ -46,6 +46,9 @@ class BrowserTaskRecord(Base):
     group_count: Mapped[int] = mapped_column(Integer, default=0)
     model_usage: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+    # 卡在待决问题上的任务：重启后要把"还在等什么"还给用户
+    waiting_reason: Mapped[str] = mapped_column(Text, default="")
+    pending_question: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -81,6 +84,9 @@ def _snapshot(task: AgentTask, result: Optional[dict] = None) -> Dict[str, Any]:
         "group_count": len(task.canonical),
         "model_usage": _dumps(task.model_usage),
         "notes": _dumps(list(task.notes)),
+        # 待决问题也要存：重启后回读时不能让用户看到"问过又忘了"
+        "waiting_reason": task.waiting_reason or "",
+        "pending_question": _dumps(task.pending_question or {}),
         "updated_at": datetime.utcnow(),
     }
 
@@ -123,6 +129,8 @@ async def get_task_record(
     data["requirement"] = _loads(record.requirement)
     data["options"] = _loads(record.options)
     data["platforms"] = _loads(record.platforms)
+    data["waiting_reason"] = record.waiting_reason or None
+    data["pending_question"] = _loads(record.pending_question) or None
     return data
 
 
@@ -194,8 +202,9 @@ def task_view_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "requirement": requirement,
         "options": record.get("options") or {},
         "platforms": platforms,
-        "waiting_reason": None,
-        "pending_question": None,
+        # 重启时正卡在待决问题上的任务，回读后要把问题还给它
+        "waiting_reason": record.get("waiting_reason") or None,
+        "pending_question": record.get("pending_question") or None,
         "budget_exhausted": bool(result.get("budget_exhausted")),
         "model_usage": record.get("model_usage") or {},
         "notes": list(record.get("notes") or []),

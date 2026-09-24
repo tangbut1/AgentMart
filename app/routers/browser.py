@@ -31,6 +31,21 @@ async def platforms() -> Dict[str, Any]:
     return service.platform_status()
 
 
+@router.post("/platforms/{group}/login", summary="打开该平台的登录窗口（用户本人登录）")
+async def open_login(group: str) -> Dict[str, Any]:
+    """弹出一个可见的浏览器窗口。
+
+    账号密码、短信验证码都由用户本人在这个窗口里输入；
+    Agent 只每隔几秒探测一次「是否已登录」，不读取账号与 cookie。
+    """
+    return await service.open_login(group)
+
+
+@router.post("/platforms/{group}/login/close", summary="关闭该平台的登录窗口")
+async def close_login(group: str) -> Dict[str, Any]:
+    return await service.close_login(group)
+
+
 @router.post("/platforms/{group}/clear", summary="清除某平台浏览器登录态")
 async def clear_profile(group: str) -> Dict[str, Any]:
     return service.clear_profile(group)

@@ -39,6 +39,7 @@ from .extract import (
     parse_money,
 )
 from .llm import BudgetExceeded, ModelClient, ModelError
+from .login import LoginManager, LoginSession, LoginUnavailable
 from .profiles import (
     all_profiles,
     delete_profile,
@@ -384,6 +385,9 @@ class AgentTask:
     budget_exhausted: bool = False
     waiting_reason: Optional[str] = None
     pending_question: Optional[Dict[str, Any]] = None
+    # 专业评测那个问题问过一次就够了：答完再 start 不能重新问一遍，
+    # 否则用户永远卡在第 2 步，任务一次都跑不起来
+    review_question_asked: bool = False
     notes: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -419,6 +423,12 @@ class AgentTask:
     def summary_status(self) -> TaskStatus:
         if self.status.is_terminal:
             return self.status
+        # 任务级等待（例如还没回答"要不要专业评测"）优先于平台状态，
+        # 否则前端会把它显示成"待开始"，用户看不到自己在等什么
+        if self.status is TaskStatus.WAITING_CONFIRM:
+            return TaskStatus.WAITING_CONFIRM
+        if self.status is TaskStatus.WAITING_USER:
+            return TaskStatus.WAITING_USER
         statuses = [s.status for s in self.states.values()]
         if any(s is TaskStatus.WAITING_USER for s in statuses):
             return TaskStatus.WAITING_USER
@@ -489,6 +499,8 @@ class ShoppingAgent:
         self.max_concurrency = max_concurrency
         # 测试可注入驱动工厂；默认走真实 Playwright
         self._driver_factory = driver_factory
+        # 手动登录窗口：和任务窗口对同一 profile 组互斥（见 _acquire_session）
+        self.logins = LoginManager()
 
     # ---- 模型客户端 ----
     def model_client(self, refresh: bool = False) -> ModelClient:
@@ -531,8 +543,14 @@ class ShoppingAgent:
         if task.status is TaskStatus.RUNNING:
             return task
 
-        # 需求第 2 步：先问要不要专业评测，默认关闭
-        if task.options.ask_review_question and task.pending_question is None:
+        # 需求第 2 步：先问要不要专业评测，默认关闭。
+        # 用 review_question_asked 记住"问过了"，答完就不能再问第二次。
+        if (
+            task.options.ask_review_question
+            and not task.review_question_asked
+            and task.pending_question is None
+        ):
+            task.review_question_asked = True
             task.pending_question = {
                 "key": "include_reviews",
                 "question": "是否需要加入专业评测分析？（回复：要 / 不要）",
@@ -544,6 +562,7 @@ class ShoppingAgent:
             return task
 
         task.status = TaskStatus.RUNNING
+        task.waiting_reason = None
         task.updated_at = datetime.now()
         runner = asyncio.create_task(self._run(task))
         self._runners[task.id] = runner
@@ -557,6 +576,7 @@ class ShoppingAgent:
         affirmative = str(value).strip() in ("要", "是", "yes", "y", "true", "1", "需要")
         task.requirement.include_reviews = affirmative
         task.pending_question = None
+        task.waiting_reason = None
         task.notes.append(
             "专业评测分析：" + ("已开启（用户明确回复“要”）" if affirmative else "未开启（默认关闭）")
         )
@@ -629,6 +649,15 @@ class ShoppingAgent:
     ) -> BrowserSession:
         group = profile_group(platform)
         state.log(ActionKind.NAVIGATE, f"准备浏览器会话（登录态目录组：{group}）")
+        # 同一个 profile 目录同时只能被一个 Chromium 持久化上下文占用：
+        # 用户正开着登录窗口时，任务不能抢同一个目录
+        if self.logins.is_busy(group):
+            login = self.logins.get(group)
+            raise BlockedPlatform(
+                BlockedReason.LOGIN_REQUIRED,
+                f"该平台的登录窗口正开着（{login.status_label if login else '未知'}）。"
+                "请先在那个窗口里完成登录并关掉它，再重新开始这个平台。",
+            )
         session = self._sessions.get(group)
         if session is None:
             driver = self._build_driver(task, platform)
@@ -657,6 +686,30 @@ class ShoppingAgent:
     async def close_all_sessions(self) -> None:
         for group in list(self._sessions):
             await self.close_group(group)
+        # 登录窗口一起收掉，避免服务退出后残留浏览器进程
+        await self.logins.close_all()
+
+    # ---- 手动登录窗口 ----
+    async def open_login_window(self, group: str) -> LoginSession:
+        """弹出一个可见浏览器窗口，让用户本人登录该平台。
+
+        登录态落在这个平台自己的 profile 目录里，之后的比价任务直接复用。
+        这里只做「开窗 + 探测是否登录」，不代填任何东西。
+        """
+        try:
+            return await self.logins.open(
+                group,
+                driver_factory=self._driver_factory,
+                busy_groups=list(self._sessions),
+            )
+        except KeyError as exc:
+            raise LoginUnavailable(f"没有这个平台组：{exc}") from exc
+
+    async def close_login_window(self, group: str) -> Dict[str, Any]:
+        return await self.logins.close(group)
+
+    def login_window_status(self) -> List[Dict[str, Any]]:
+        return self.logins.status()
 
     async def _close_idle_sessions(self) -> None:
         for group, session in list(self._sessions.items()):
@@ -686,6 +739,9 @@ class ShoppingAgent:
             task.updated_at = datetime.now()
             task.status = self._final_status(task)
             await self._finalize(task)
+            # 跑完必须把浏览器会话收掉：持久化上下文会一直占着 profile 目录，
+            # 不收的话用户想再开登录窗口会被"目录被占用"挡住
+            await self._close_idle_sessions()
 
     def _final_status(self, task: AgentTask) -> TaskStatus:
         if self._cancel_events[task.id].is_set():
