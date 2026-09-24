@@ -134,7 +134,10 @@ export default function BrowserTaskPage() {
   }
 
   const waiting = task.summary_status === "waiting_user";
-  const running = task.summary_status === "running" || task.summary_status === "pending";
+  // 只有"运行中"才禁用开始按钮。"待开始"恰恰是最该让用户点的时候——
+  // 之前把 pending 也算成 running，按钮从任务创建那刻起就是灰的，
+  // 显示"执行中…"却什么都不会发生。
+  const running = task.summary_status === "running";
   const canAct = !TERMINAL.includes(task.summary_status) && !task.restored;
   // 后端理应给全字段，但老记录/异常路径可能缺；缺了就按 0 显示，
   // 不能让一个数字把整页打成白屏

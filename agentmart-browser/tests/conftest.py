@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.browser import agent
 from app.domain.enums import DataStatus, Platform, PolicyCategory, PolicyScope, ShopType
 from app.domain.models import Offer, Policy
 
@@ -48,3 +49,13 @@ def make_offer(
 @pytest.fixture
 def now():
     return datetime(2026, 1, 15, 12, 0, 0)
+
+
+@pytest.fixture(autouse=True)
+def fast_link_wait(monkeypatch):
+    """把「等搜索结果页渲染」的预算缩到最小，避免每个空结果用例都等十几秒。
+
+    真实等待时长由 ``test_search_link_wait.py`` 单独覆盖；这里只求快。
+    """
+    monkeypatch.setattr(agent, "_LINK_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(agent, "_LINK_POLL_SECONDS", 0.01)

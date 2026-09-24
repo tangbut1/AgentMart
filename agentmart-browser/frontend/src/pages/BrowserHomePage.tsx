@@ -8,7 +8,7 @@ import {
   type TaskSummary,
 } from "../lib/browserApi";
 import { PLATFORM_LABEL } from "../lib/format";
-import { Badge, Icon, Notice, Segmented } from "../components/ui";
+import { Badge, Icon, Notice, Segmented, type BadgeTone } from "../components/ui";
 
 const ALL_PLATFORMS: BrowserPlatform[] = ["jd", "taobao", "tmall", "pdd", "douyin"];
 
@@ -20,9 +20,11 @@ const EXAMPLES = [
 
 type Mode = "browser" | "api";
 
-function loginTone(state?: string): "ok" | "warn" | "muted" | "danger" {
+function loginTone(state?: string): BadgeTone {
   if (state === "logged_in") return "ok";
   if (state === "waiting_login" || state === "failed") return "warn";
+  // verified_before：本机探测到过已登录，但不是此刻的确认，用 info 而不是 ok
+  if (state === "verified_before") return "info";
   if (state === "saved_unverified") return "muted";
   return "warn";
 }
@@ -139,8 +141,13 @@ export default function BrowserHomePage() {
     }
   }, [text, platforms, maxCandidates, navigate]);
 
+  // 只有"从未登进去过"的平台才算没登录。verified_before 是本机探测到过
+  // 已登录的，不该再弹"还没登录"的警告——用户刚登好却被说没登，很困惑。
   const notLoggedIn = (status?.recipes ?? []).filter(
-    (r) => r.login_state !== "logged_in" && r.login_state !== "waiting_login",
+    (r) =>
+      r.login_state !== "logged_in" &&
+      r.login_state !== "waiting_login" &&
+      r.login_state !== "verified_before",
   );
 
   return (

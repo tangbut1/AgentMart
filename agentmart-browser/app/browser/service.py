@@ -17,7 +17,13 @@ from .agent import parse_requirement
 from .enums import DataOrigin
 from .llm import ModelError, delete_config, load_config, save_config
 from .login import LoginUnavailable
-from .profiles import all_profiles, delete_profile, describe_storage, platforms_for_group
+from .profiles import (
+    all_profiles,
+    delete_profile,
+    describe_storage,
+    platforms_for_group,
+    verified_at,
+)
 from . import store
 
 
@@ -26,6 +32,11 @@ def _login_state(profile_exists: bool, window: dict) -> tuple:
 
     目录存在只说明这个平台开过浏览器，不代表登进去了——之前界面把它
     显示成「已登录」是会误导人的，这里分开。
+
+    但如果登录窗口确实探测到过已登录，就记一个本机时间戳：窗口关了、
+    服务重启了，也告诉用户「你之前登进去过」，而不是让他以为自己没登。
+    这个标记同样证明不了 cookie 此刻还有效，所以文案一定带时间，
+    任务真跑起来时也仍会重新探测。
     """
     status = window.get("status")
     if status == "logged_in":
@@ -34,6 +45,9 @@ def _login_state(profile_exists: bool, window: dict) -> tuple:
         return "waiting_login", "等待你登录"
     if status == "failed":
         return "failed", "窗口打开失败"
+    verified = verified_at(window.get("group") or "")
+    if verified:
+        return "verified_before", f"{verified} 验证过已登录"
     if profile_exists:
         return "saved_unverified", "有登录态，未验证"
     return "none", "未登录"
@@ -120,7 +134,7 @@ class BrowserService:
         for platform in Platform:
             summary = recipe_summary(platform)
             group = summary["profile_group"]
-            window = login_windows.get(group) or {}
+            window = login_windows.get(group) or {"group": group}
             state, label = _login_state(summary["profile_exists"], window)
             summary["login_state"] = state
             summary["login_state_label"] = label

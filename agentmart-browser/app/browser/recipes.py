@@ -40,13 +40,17 @@ JS_LOGIN_PROBE = r"""
 """
 
 # 风控/验证码探测
+# 注意：京东限流时的原文是「抱歉由于访问频繁导致无法搜索，请稍后再试」，
+# 早期正则只写了「访问过于频繁」，匹配不上，于是把它误报成
+# "页面结构可能已变化或需要登录"——告诉用户一个错误的原因。
+# 这里按"限流/被拦"的语义来写，不依赖某一家的具体措辞。
 JS_BLOCKED_PROBE = r"""
 () => {
   const text = (document.body && document.body.innerText || '').slice(0, 3000);
   const url = location.href;
   const captcha = /验证码|滑块|安全验证|人机识别|请完成验证|nc_icon|punish/.test(text)
     || /captcha|punish|verify/.test(url);
-  const risk = /访问过于频繁|操作过于频繁|系统繁忙|异常流量|风控|已被限制/.test(text);
+  const risk = /访问过于频繁|操作过于频繁|访问频繁|无法搜索|稍后再试|刷新太重|系统繁忙|异常流量|风控|已被限制|暂时无法/.test(text);
   const loginWall = /请登录后查看|登录后可见|请先登录/.test(text);
   return { captcha, risk, loginWall };
 }

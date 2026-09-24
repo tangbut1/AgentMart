@@ -6,7 +6,7 @@ import {
   type PlatformStatusView,
 } from "../lib/browserApi";
 import { PLATFORM_LABEL } from "../lib/format";
-import { Badge, Icon, Notice, Segmented } from "../components/ui";
+import { Badge, Icon, Notice, Segmented, type BadgeTone } from "../components/ui";
 
 interface ModelForm {
   provider: string;
@@ -30,9 +30,12 @@ const EMPTY_FORM: ModelForm = {
   note: "",
 };
 
-function loginTone(state?: string): "ok" | "warn" | "muted" | "danger" {
+function loginTone(state?: string): BadgeTone {
   if (state === "logged_in") return "ok";
   if (state === "waiting_login" || state === "failed") return "warn";
+  // verified_before 是好的（登进去过），但不如刚才探测到的那么确定，
+  // 所以用 info 而不是 ok，文案里也带着验证时间
+  if (state === "verified_before") return "info";
   if (state === "saved_unverified") return "muted";
   return "warn";
 }

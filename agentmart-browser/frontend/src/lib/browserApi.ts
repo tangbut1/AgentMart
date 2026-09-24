@@ -278,6 +278,7 @@ export interface ModeInfo {
 export type LoginStateCode =
   | "logged_in"
   | "waiting_login"
+  | "verified_before"
   | "saved_unverified"
   | "failed"
   | "none";

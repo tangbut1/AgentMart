@@ -26,7 +26,7 @@ from loguru import logger
 
 from ..domain.enums import Platform
 from .driver import BrowserDriver, PlaywrightConfig, PlaywrightDriver
-from .profiles import ensure_profile_dir, platforms_for_group
+from .profiles import ensure_profile_dir, mark_verified, platforms_for_group
 from .recipes import JS_LOGIN_PROBE, get_recipe
 
 # 轮询间隔：够快让用户一登完就看到状态，又不至于频繁求值打扰页面
@@ -234,6 +234,9 @@ class LoginManager:
                     "检测到已登录。可以关掉这个窗口了——登录态保存在本机，"
                     "接下来的比价任务会直接用。"
                 )
+                # 落一个本机标记，否则窗口一关、服务一重启，界面又退回
+                # "有登录态，未验证"，用户刚登好的账号像没登一样
+                mark_verified(session.group)
                 logger.info(f"登录窗口探测到已登录[{session.group}]")
                 return
             if session.status == OPENING:

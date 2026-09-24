@@ -103,6 +103,11 @@ _FILLER_RE = re.compile(
 _KEYWORD_MAX_LEN = 24
 # 字母数字型号片段（TAWJ91717 / WH-1000XM5 / S24）
 _MODEL_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[-–][A-Za-z0-9]+)*\d[\w-]*")
+# 搜索结果页最多等这么久让商品锚点渲染出来。搜索页普遍是客户端渲染，
+# goto 返回的瞬间节点往往还没挂上；不等就抽取会拿到 0 条，
+# 于是把"还没渲染完"误判成"页面结构不认识"（京东实测就是这样）。
+_LINK_WAIT_SECONDS = 12.0
+_LINK_POLL_SECONDS = 0.5
 
 
 class BlockedPlatform(RuntimeError):
@@ -453,9 +458,14 @@ class AgentTask:
             return TaskStatus.WAITING_CONFIRM
         if any(s is TaskStatus.RUNNING for s in statuses):
             return TaskStatus.RUNNING
-        if all(s is TaskStatus.PENDING for s in statuses):
+        # 没有平台在跑。只要有平台还没开始（包括另一些已经取消/结束的混合
+        # 情况），任务就还是「待开始」——之前这里无条件回退成 RUNNING，
+        # 前端据此把按钮置灰并显示"执行中…"，用户点不动，任务一次都跑不起来。
+        if any(s is TaskStatus.PENDING for s in statuses):
             return TaskStatus.PENDING
-        return TaskStatus.RUNNING
+        # 平台状态都给不出信息（还没有平台，或全都已结束而任务级状态还没落定）
+        # 时，如实退回任务自己的状态，不要编一个"运行中"
+        return self.status
 
     def to_dict(self) -> dict:
         return {
@@ -914,8 +924,7 @@ class ShoppingAgent:
         await self._probe_blocked(driver, state, platform)
 
         # 3) 收集商品链接（确定性 DOM 规则）
-        links = await driver.evaluate(JS_PRODUCT_LINKS, task.options.max_links)
-        links = self._normalize_links(links)
+        links = await self._collect_links(driver, state, task)
         state.log(ActionKind.READ, f"搜索结果页识别到 {len(links)} 个商品链接")
         if not links:
             raise BlockedPlatform(
@@ -1014,6 +1023,41 @@ class ShoppingAgent:
             state.log(ActionKind.NAVIGATE, f"打开 {url[:90]}", url=url)
         return bool(ok)
 
+    async def _collect_links(
+        self, driver: BrowserDriver, state: PlatformState, task: AgentTask
+    ) -> List[Dict[str, str]]:
+        """等搜索结果页把商品锚点渲染出来，最多等 ``_LINK_WAIT_SECONDS`` 秒。
+
+        搜索页普遍是客户端渲染，``goto`` 返回时商品节点常常还没挂上。立刻
+        抽取只会拿到 0 条，调用方便会把"还没渲染完"报成"页面结构不认识"。
+        这里用小步低频重试；等不到就返回空列表，由调用方如实报
+        structure_unknown——不猜、不补数据。
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _LINK_WAIT_SECONDS
+        waited = False
+        while True:
+            cancel = self._cancel_events.get(task.id)
+            if cancel is not None and cancel.is_set():
+                return []
+            try:
+                links = self._normalize_links(
+                    await driver.evaluate(JS_PRODUCT_LINKS, task.options.max_links)
+                )
+            except Exception:
+                links = []
+            if links:
+                if waited:
+                    state.log(
+                        ActionKind.READ,
+                        "搜索结果页商品已渲染出来（页面为动态加载，已等待）",
+                    )
+                return links
+            if loop.time() >= deadline:
+                return []
+            waited = True
+            await asyncio.sleep(_LINK_POLL_SECONDS)
+
     async def _probe_blocked(
         self, driver: BrowserDriver, state: PlatformState, platform: Platform
     ) -> None:
@@ -1032,8 +1076,9 @@ class ShoppingAgent:
         if probe.get("risk"):
             raise BlockedPlatform(
                 BlockedReason.RISK_CONTROL,
-                "平台提示访问过于频繁/存在风控。已停止该平台的自动访问，"
-                "请稍后重试或改用您手动提供链接。",
+                "平台提示访问过于频繁/搜索被限制（常见原因是短期内同一账号"
+                "或网络搜索次数偏多）。已停止该平台的自动访问——不会用重试"
+                "绕过它。请隔一段时间再试，或改用您手动提供的商品链接。",
             )
         if probe.get("loginWall"):
             raise BlockedPlatform(
