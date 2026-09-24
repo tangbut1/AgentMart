@@ -1,0 +1,35 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---- Secrets / local config ----
+.env
+*.local
+
+# ---- Database / runtime data ----
+*.db
+*.sqlite3
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+npm-debug.log*
+
+# ---- 个人浏览器版的登录态（绝不上传、绝不提交）----
+.agentmart/
+~/.agentmart/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Tooling caches (local scan history, never commit) ----
+.mimosa/
