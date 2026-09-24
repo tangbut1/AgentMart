@@ -15,6 +15,9 @@ loguru==0.7.2
 tenacity==8.3.0
 cachetools==5.3.3
 
+# ---- 个人浏览器版（不装也能启动服务，只是浏览器任务不可用）----
+playwright>=1.49,<2
+
 # ---- dev / test ----
 pytest==8.2.2
 pytest-asyncio==0.23.7

@@ -207,12 +207,18 @@ export function Notice({
   icon,
   children,
 }: {
-  tone?: "info" | "warn" | "danger" | "demo";
+  tone?: "info" | "warn" | "danger" | "demo" | "ok";
   title?: string;
   icon?: ReactNode;
   children?: ReactNode;
 }) {
-  const iconMap = { info: "info", warn: "alert", danger: "alert", demo: "alert" } as const;
+  const iconMap = {
+    info: "info",
+    warn: "alert",
+    danger: "alert",
+    demo: "alert",
+    ok: "check",
+  } as const;
   return (
     <div className={`notice notice--${tone}`} role="note">
       <span className="notice__icon" aria-hidden="true">

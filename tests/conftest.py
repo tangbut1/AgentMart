@@ -6,16 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from app.domain.enums import (
-    ConditionKind,
-    DataStatus,
-    DiscountKind,
-    Platform,
-    PolicyCategory,
-    PolicyScope,
-    ShopType,
-)
-from app.domain.models import Discount, Offer, Policy
+from app.domain.enums import DataStatus, Platform, PolicyCategory, PolicyScope, ShopType
+from app.domain.models import Offer, Policy
 
 
 def make_offer(

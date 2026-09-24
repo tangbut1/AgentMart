@@ -19,9 +19,10 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from . import VERSION, ARCHITECTURE
+from .browser import VERSION as BROWSER_VERSION
 from .config import settings
 from .database import init_db
-from .routers import health, reviews, search, sources
+from .routers import browser, health, reviews, search, sources
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
@@ -43,13 +44,24 @@ async def lifespan(app: FastAPI):
     logger.info("AgentMart 启动完成")
     yield
     logger.info("AgentMart 关闭")
+    # 关掉可能还开着的浏览器窗口，避免残留进程
+    try:
+        from .browser.service import service as browser_service
+
+        await browser_service.agent.close_all_sessions()
+    except Exception:
+        logger.exception("关闭浏览器会话失败")
 
 
 app = FastAPI(
     title="AgentMart API",
     description=(
         "跨平台智能购物决策平台：多平台商品与优惠对比、可解释到手价、"
-        "政策差异标注、评测观点整理与可解释推荐。"
+        "政策差异标注、评测观点整理与可解释推荐。\n\n"
+        "两套架构共用同一套领域逻辑：\n"
+        f"- 官方 API 架构版（{VERSION}）：适配电商开放平台接口\n"
+        f"- 个人浏览器版（{BROWSER_VERSION}）：在您自己登录的浏览器会话里读取页面\n\n"
+        "个人浏览器版不代领券、不代下单、不代付款。"
     ),
     version=VERSION,
     docs_url="/docs",
@@ -80,6 +92,7 @@ app.include_router(health.router)
 app.include_router(search.router)
 app.include_router(reviews.router)
 app.include_router(sources.router)
+app.include_router(browser.router)
 
 
 @app.get("/api", tags=["系统"])
@@ -88,6 +101,7 @@ async def api_root():
         "message": "Welcome to AgentMart API",
         "version": VERSION,
         "architecture": ARCHITECTURE,
+        "browser_version": BROWSER_VERSION,
         "docs": "/docs",
         "endpoints": [
             "GET /api/search?keyword=",
@@ -100,6 +114,22 @@ async def api_root():
             "POST /api/reviews/{id}/ai-summary",
             "GET /api/sources",
             "GET /api/platforms",
+            "GET /api/browser/mode",
+            "GET /api/browser/platforms",
+            "GET /api/browser/model",
+            "POST /api/browser/model",
+            "POST /api/browser/model/test",
+            "DELETE /api/browser/model",
+            "POST /api/browser/tasks",
+            "GET /api/browser/tasks",
+            "GET /api/browser/tasks/{id}",
+            "GET /api/browser/tasks/{id}/result",
+            "POST /api/browser/tasks/{id}/start",
+            "POST /api/browser/tasks/{id}/answer",
+            "POST /api/browser/tasks/{id}/cancel",
+            "POST /api/browser/tasks/{id}/platforms/{platform}/pause",
+            "POST /api/browser/tasks/{id}/platforms/{platform}/resume",
+            "POST /api/browser/tasks/{id}/platforms/{platform}/cancel",
         ],
     }
 
@@ -110,6 +140,12 @@ if FRONTEND_DIST.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # /api/* 拼错路径时若回退成 index.html，调用方会拿到 200 + HTML，
+        # 把「接口不存在」误判成「请求成功」，所以 API 前缀一律按 404 处理
+        if full_path == "api" or full_path.startswith("api/"):
+            return JSONResponse(
+                {"detail": f"接口不存在：/{full_path}", "docs": "/docs"}, status_code=404
+            )
         index = FRONTEND_DIST / "index.html"
         if index.is_file():
             from fastapi.responses import FileResponse

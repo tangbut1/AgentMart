@@ -1,6 +1,8 @@
 """API 端到端测试（TestClient，不走外网 —— 平台均未配置凭据）。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -109,6 +111,24 @@ def test_sources_endpoint(client):
     kinds = {s["kind"] for s in sources}
     assert "platform_api" in kinds
     assert "demo" in kinds
+
+
+def test_unknown_api_path_returns_json_404_not_spa_html(client):
+    """拼错 /api/* 不能回退成 200 + 前端页面，否则调用方会误判为请求成功。"""
+    resp = client.get("/api/browser/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/json")
+    assert "不存在" in resp.json()["detail"]
+
+
+def test_spa_deep_link_still_served(client):
+    index = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "index.html"
+    if not index.is_file():  # 未构建前端时没有 SPA 回退，跳过
+        pytest.skip("frontend/dist 未构建")
+    resp = client.get("/browser/task/some-id")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert 'id="root"' in resp.text
 
 
 def test_resolve_rejects_non_bilibili(client):

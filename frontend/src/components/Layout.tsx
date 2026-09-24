@@ -3,6 +3,8 @@ import { Icon } from "./ui";
 
 const NAV = [
   { to: "/", label: "首页", end: true },
+  { to: "/browser", label: "个人浏览器比价", end: true },
+  { to: "/browser/settings", label: "平台与模型", end: false },
   { to: "/reviews", label: "评测库", end: false },
   { to: "/sources", label: "数据来源", end: false },
 ];
@@ -55,7 +57,7 @@ export default function Layout() {
           </span>
           <span className="row gap-6">
             <Icon name="shield" size={14} />
-            <span>不抓取需登录的商品页面 · 不绕过平台反爬机制</span>
+            <span>不代领券 · 不代下单 · 不代付款 · 不收集账号密码</span>
           </span>
         </div>
       </footer>

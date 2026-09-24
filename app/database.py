@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import settings
+from loguru import logger
 
 
 class Base(DeclarativeBase):
@@ -92,6 +93,28 @@ async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _add_missing_columns(conn)
+
+
+# 本地 SQLite 没有迁移工具，新增列时由这里补齐（列名写死在代码里，
+# 不涉及任何外部输入）。生产环境建议改用 Alembic。
+_ADDED_COLUMNS = {
+    "browser_tasks": (("requirement", "TEXT DEFAULT ''"),),
+}
+
+
+async def _add_missing_columns(conn) -> None:
+    if conn.dialect.name != "sqlite":
+        return
+    for table, columns in _ADDED_COLUMNS.items():
+        rows = await conn.exec_driver_sql(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in rows}
+        for name, ddl in columns:
+            if name not in existing:
+                await conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"
+                )
+                logger.info(f"已为 {table} 补充字段 {name}")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

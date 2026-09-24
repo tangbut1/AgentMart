@@ -16,7 +16,6 @@ from app.domain.enums import (
 from app.domain.models import (
     CanonicalProduct,
     Discount,
-    Offer,
     Review,
     UserPreferences,
 )

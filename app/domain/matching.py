@@ -26,6 +26,17 @@ KNOWN_BRANDS = [
     "DJI", "GoPro", "佳能", "Canon", "尼康", "Nikon", "适马", "SIGMA",
     "Anker", "安克", "贝尔金", "Belkin", "雷柏", "RAPOO", "达尔优", "IKBC",
     "阿米洛", "Varmilo", "洛斐", "Lofree", "攀升", "京东京造", "网易严选",
+    # 户外与服装（冲锋衣/羽绒服/鞋服是高频购物类目）
+    "探路者", "TOREAD", "凯乐石", "KAILAS", "伯希和", "PELLIOT", "骆驼",
+    "CAMEL", "迪卡侬", "Decathlon", "挪客", "Naturehike", "牧高笛", "MobiGarden",
+    "北面", "TheNorthFace", "Columbia", "哥伦比亚", "狼爪", "JackWolfskin",
+    "猛犸象", "Mammut", "始祖鸟", "Arc'teryx", "巴塔哥尼亚", "Patagonia",
+    "优衣库", "Uniqlo", "无印良品", "MUJI", "海澜之家", "太平鸟", "波司登",
+    "Bosideng", "雪中飞", "安踏", "Anta", "李宁", "Lining", "特步", "Xtep",
+    "361度", "匹克", "Peak", "鸿星尔克", "ERKE", "回力", "Warrior",
+    "耐克", "Nike", "阿迪达斯", "Adidas", "彪马", "Puma", "新百伦",
+    "NewBalance", "亚瑟士", "ASICS", "斐乐", "Fila", "匡威", "Converse",
+    "万斯", "Vans", "Skechers", "斯凯奇", "安德玛", "UnderArmour", "Lululemon",
 ]
 
 VERSION_PATTERNS: List[Tuple[str, str]] = [
@@ -81,12 +92,32 @@ COLOR_WORDS = [
 ]
 
 _STORAGE_RE = re.compile(
-    r"(?<![\d.])(\d{1,4})\s*(GB|TB|G|T|gb|tb|g|t)(?![\w.])", re.IGNORECASE
+    r"(?<![\d.])(?P<num>\d{1,4})\s*(?P<unit>GB|TB|MB|G|T)(?![\w.])", re.IGNORECASE
 )
 # 字母数字型号（WH-1000XM5 / RTX4070 / S24）
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[-–][A-Za-z0-9]+)*\d[\w-]*")
 # 「单词 + 数字」型号（iPhone 15 / Galaxy S24 的 S24 由上一规则捕获）
 _WORD_NUM_RE = re.compile(r"\b([A-Za-z]{2,})\s+(\d{1,4}[A-Za-z]{0,6})\b")
+# 尺码：字母尺码 / 「42码」/「175/96A」号型。
+# 字母尺码要求两侧都不是字母数字，且前面不是「数字+空格」，
+# 这样 "5G"、"S24"、"M330"、"1.5 L" 都不会被误当成尺码。
+_SIZE_RE = re.compile(
+    r"(?<![\d.])(?<!\d\s)(?P<alpha>\d?X{0,3}L|\d?XL|XS|S|M)(?![A-Za-z0-9])"
+    r"|(?<![\d.])(?P<num>\d{2,3})\s*(?=码)"
+    r"|(?<![\d.])(?P<eu>\d{3}/\d{2,3}[A-D])"
+)
+# 存储单位的归一写法
+_STORAGE_UNIT = {"G": "GB", "T": "TB", "GB": "GB", "TB": "TB", "MB": "MB"}
+
+
+def _is_plausible_storage(num: str, unit: str) -> bool:
+    """排除把网络制式/容量单位误判成存储的情况。
+
+    "5G" 是网络制式不是 5GB；裸写 G/T 时至少两位才可能是存储容量。
+    """
+    if unit.upper() in ("GB", "TB", "MB"):
+        return True
+    return len(num) >= 2
 
 
 # ─── 签名 ──────────────────────────────────────────────────────
@@ -96,6 +127,8 @@ class ModelSignature:
     brand: Optional[str] = None
     model_tokens: Set[str] = field(default_factory=set)
     storages: Set[str] = field(default_factory=set)
+    # 服装/鞋类的尺码（L/XL/42码/175/96A）。不同尺码是不同 SKU，硬冲突。
+    sizes: Set[str] = field(default_factory=set)
     color: Optional[str] = None
     version: Optional[str] = None      # cn/hk/us/jp/eu/oversea/None
     condition: Optional[str] = None    # new/used/refurbished/None
@@ -162,7 +195,15 @@ def extract_signature(title: str, brand_hint: Optional[str] = None) -> ModelSign
             sig.model_tokens.add(token)
 
     for num, unit in _STORAGE_RE.findall(text):
-        sig.storages.add(_normalize_storage(num, unit))
+        # "5G" 是网络制式不是存储；裸写 G/T 且只有一位时不认
+        if not _is_plausible_storage(num, unit):
+            continue
+        sig.storages.add(_normalize_storage(num, _STORAGE_UNIT[unit.upper()]))
+
+    for match in _SIZE_RE.finditer(text):
+        value = match.group(0).strip().upper()
+        if value:
+            sig.sizes.add(value)
 
     for word in COLOR_WORDS:
         if re.search(r"(?<![A-Za-z])" + re.escape(word) + r"(?![A-Za-z])", text, re.IGNORECASE):
@@ -200,6 +241,8 @@ def hard_conflict(a: ModelSignature, b: ModelSignature) -> Optional[str]:
         return "套装与单品混在一起"
     if a.storage and b.storage and a.storage != b.storage:
         return f"容量不同（{a.storage} / {b.storage}）"
+    if a.sizes and b.sizes and a.sizes != b.sizes:
+        return f"尺码不同（{'/'.join(sorted(a.sizes))} / {'/'.join(sorted(b.sizes))}）"
     return None
 
 

@@ -1,7 +1,7 @@
 """规格匹配测试：核心是「不错配」。"""
 from __future__ import annotations
 
-from app.domain.enums import Platform, ShopType
+from app.domain.enums import Platform
 from app.domain.matching import (
     extract_signature,
     group_offers,

@@ -311,8 +311,16 @@ ol {
 }
 
 .small {
-  font-size: 13px;
+  font-size: 12.5px;
 }
+
+/* 指向外部平台的外链：可点区域比纯文本行高大，便于触屏点击 */
+.link-out {
+  display: inline-block;
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+
 
 .num {
   font-variant-numeric: tabular-nums;
@@ -322,6 +330,8 @@ ol {
 .mono {
   font-family: var(--font-mono);
   font-size: 0.92em;
+  /* 目录路径这类长字符串在窄屏必须可断行，否则会顶破表格 */
+  overflow-wrap: anywhere;
 }
 
 .text-price {
@@ -509,11 +519,12 @@ ol {
   font-size: 13.5px;
   color: var(--ink-2);
   user-select: none;
+  min-height: 26px;
 }
 
 .checkbox input {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   accent-color: var(--primary);
   cursor: pointer;
 }
@@ -818,6 +829,11 @@ button.chip[aria-pressed="true"] {
 .notice--demo {
   border-left-color: var(--price);
   background: var(--price-tint);
+}
+
+.notice--ok {
+  border-left-color: var(--ok);
+  background: var(--ok-tint);
 }
 
 .notice a {
@@ -1262,6 +1278,125 @@ button.chip[aria-pressed="true"] {
   height: 100%;
   border-radius: 3px;
   background: var(--primary);
+}
+
+/* ─── 购买卡片（个人浏览器版） ───────────────────────────── */
+
+.purchase-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.purchase-card__head {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.purchase-card__title {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
+.purchase-card__title a {
+  display: inline-block;
+  /* 让可点区域比一行文字高一点，触屏更好点 */
+  padding-block: 2px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.purchase-card__title a:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.purchase-card__price {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.purchase-card__certainty {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+}
+
+.purchase-card__foot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* ─── 执行记录 ─────────────────────────────────────────── */
+
+.step-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.step-log__item {
+  display: grid;
+  grid-template-columns: 56px 76px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.step-log__item:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+
+.step-log__time {
+  color: var(--ink-4);
+  font-size: 12px;
+}
+
+.step-log__action {
+  color: var(--ink-3);
+}
+
+.step-log__detail {
+  color: var(--ink-2);
+  word-break: break-word;
+}
+
+details > summary {
+  cursor: pointer;
+  color: var(--ink-3);
+  padding: 2px 0;
+}
+
+details > summary:hover {
+  color: var(--primary);
+}
+
+details[open] > summary {
+  margin-bottom: 6px;
 }
 
 /* ─── 评测卡片 ─────────────────────────────────────────── */
@@ -1885,11 +2020,20 @@ button.chip[aria-pressed="true"] {
     gap: 8px 16px;
   }
 
+  /* 窄屏导航改为整行换行，避免只能靠左右滑动才能看到后面的入口 */
   .nav {
     margin-left: 0;
     width: 100%;
     order: 3;
+    flex-wrap: wrap;
+    row-gap: 2px;
+    overflow-x: visible;
     padding-bottom: 2px;
+  }
+
+  .nav__link {
+    display: inline-block;
+    padding: 8px 12px;
   }
 
   .hero__principles,
@@ -1975,6 +2119,29 @@ button.chip[aria-pressed="true"] {
   .site-footer__inner {
     flex-direction: column;
     gap: 4px;
+  }
+}
+
+@media (max-width: 860px) {
+  .purchase-card__head {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .purchase-card__price {
+    text-align: left;
+  }
+
+  .step-log__item {
+    grid-template-columns: 48px 1fr;
+  }
+
+  .step-log__action {
+    grid-column: 2;
+  }
+
+  .step-log__detail {
+    grid-column: 1 / -1;
   }
 }
 

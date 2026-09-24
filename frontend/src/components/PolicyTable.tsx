@@ -40,7 +40,7 @@ function PolicyCell({ policy }: { policy: Policy }) {
             href={policy.source_url}
             target="_blank"
             rel="noopener noreferrer nofollow"
-            className="row gap-6"
+            className="row gap-6 link-out"
           >
             <Icon name="external" size={11} />
             规则原文

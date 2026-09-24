@@ -69,7 +69,7 @@ export default function OfferBreakdown({
                   href={line.source_url}
                   target="_blank"
                   rel="noopener noreferrer nofollow"
-                  className="row gap-6"
+                  className="row gap-6 link-out"
                   style={{ fontSize: 12, color: "var(--ink-3)" }}
                   title={`来源：${line.source_url}`}
                 >
