@@ -1,79 +1,82 @@
-from pydantic_settings import BaseSettings
+"""Application settings.
+
+All credentials come from environment variables / .env only — never from
+source code. Every platform credential is optional; missing credentials
+simply mean the corresponding adapter reports `not_connected`.
+"""
 from functools import lru_cache
 from typing import List
-import json
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # App
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    # ---- App ----
     APP_ENV: str = "development"
-    APP_HOST: str = "0.0.0.0"
+    APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8000
     DEBUG: bool = True
-    SECRET_KEY: str = "change-me-in-production"
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # Database
-    DATABASE_URL: str = "postgresql://agentmart:password@localhost:5432/agentmart"
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 20
+    # ---- Database ----
+    DATABASE_URL: str = "sqlite+aiosqlite:///./agentmart.db"
 
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_CACHE_TTL: int = 3600
+    # ---- Cache ----
+    CACHE_TTL_SECONDS: int = 900
+    CACHE_MAX_ENTRIES: int = 2000
 
-    # JD
+    # ---- Outbound HTTP ----
+    HTTP_TIMEOUT_SECONDS: float = 12.0
+    HTTP_MAX_RETRIES: int = 2
+
+    # ---- JD ----
     JD_APP_KEY: str = ""
     JD_APP_SECRET: str = ""
     JD_ACCESS_TOKEN: str = ""
     JD_API_BASE_URL: str = "https://api.jd.com/routerjson"
 
-    # Taobao / Tmall
+    # ---- Taobao / Tmall ----
     TAOBAO_APP_KEY: str = ""
     TAOBAO_APP_SECRET: str = ""
     TAOBAO_ACCESS_TOKEN: str = ""
     TAOBAO_API_BASE_URL: str = "https://eco.taobao.com/router/rest"
 
-    # Bilibili
-    BILIBILI_SESSDATA: str = ""
-    BILIBILI_BILI_JCT: str = ""
-    BILIBILI_BUVID3: str = ""
-    BILIBILI_DEDEUSERID: str = ""
+    # ---- Pinduoduo ----
+    PDD_CLIENT_ID: str = ""
+    PDD_CLIENT_SECRET: str = ""
+    PDD_API_BASE_URL: str = "https://gw-api.pinduoduo.com/api/router"
 
-    # Douyin
+    # ---- Douyin ----
     DOUYIN_CLIENT_KEY: str = ""
     DOUYIN_CLIENT_SECRET: str = ""
     DOUYIN_ACCESS_TOKEN: str = ""
+    DOUYIN_API_BASE_URL: str = "https://open.douyin.com"
+    # 商品搜索接口路径：在开放平台控制台「已授权接口」中查找后填写，
+    # 例如 /goodlife/v1/goods/search（团购）或电商应用对应的商品查询路径。
+    DOUYIN_GOODS_SEARCH_PATH: str = ""
 
-    # LLM
-    OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
-    OPENAI_MODEL: str = "gpt-4o"
-    DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
-    CLAUDE_API_KEY: str = ""
-    CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"
+    # ---- Bilibili ----
+    BILIBILI_SESSDATA: str = ""
 
-    # Whisper
-    WHISPER_MODEL: str = "base"
-    WHISPER_DEVICE: str = "cpu"
+    # ---- LLM (optional) ----
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.deepseek.com/v1"
+    LLM_MODEL: str = "deepseek-chat"
 
-    # Celery
-    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    # ---- Curation ----
+    CURATION_ADMIN_TOKEN: str = ""
 
-    # CORS
-    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:5173","http://127.0.0.1:5500"]'
+    @property
+    def cors_origin_list(self) -> List[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-    def get_cors_origins(self) -> List[str]:
-        try:
-            return json.loads(self.CORS_ORIGINS)
-        except Exception:
-            return ["*"]
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    @property
+    def is_development(self) -> bool:
+        return self.APP_ENV.lower() in ("development", "dev", "local", "test")
 
 
 @lru_cache()

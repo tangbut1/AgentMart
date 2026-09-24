@@ -1,175 +1,328 @@
-from pydantic import BaseModel, Field, HttpUrl
-from typing import Optional, List, Dict, Any
-from enum import Enum
+"""API 层 Pydantic 模型（与 domain 层一一对应，附溯源字段）。"""
+from __future__ import annotations
+
 from datetime import datetime
+from decimal import Decimal
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .domain.enums import (
+    CommercialRelation,
+    ConditionKind,
+    ConnectionStatus,
+    CurationStatus,
+    DataStatus,
+    DiscountKind,
+    Platform,
+    PolicyCategory,
+    PolicyScope,
+    ReviewPlatform,
+    ShopType,
+)
 
 
-# ─── Enums ───────────────────────────────────────────────────
-class Platform(str, Enum):
-    JD = "jd"
-    TAOBAO = "taobao"
-    TMALL = "tmall"
+# ─── 通用 ──────────────────────────────────────────────────────
+
+class APIResponse(BaseModel):
+    success: bool = True
+    data: Optional[dict | list | None] = None
+    message: Optional[str] = None
 
 
-class VideoPlatform(str, Enum):
-    BILIBILI = "bilibili"
-    DOUYIN = "douyin"
+# ─── 平台状态 ──────────────────────────────────────────────────
 
-
-class ThinkMode(str, Enum):
-    FAST = "fast"
-    DEEP = "deep"
-
-
-# ─── Product Schemas ─────────────────────────────────────────
-class ProductSpec(BaseModel):
-    """Normalized product specs (flexible KV)"""
-    key: str
-    value: str
-
-
-class Product(BaseModel):
+class PlatformStatus(BaseModel):
     platform: Platform
-    product_id: str
+    adapter: str
+    status: ConnectionStatus
+    message: str
+    docs_url: str = ""
+    required_env: List[str] = []
+
+
+# ─── 优惠与价格 ────────────────────────────────────────────────
+
+class DiscountOut(BaseModel):
+    kind: DiscountKind
+    label: str
+    amount: Decimal
+    condition: str = ""
+    condition_kind: ConditionKind
+    stack_group: Optional[str] = None
+    region_limit: Optional[str] = None
+    eligibility: Optional[str] = None
+    source_url: Optional[str] = None
+    data_status: DataStatus
+
+
+class PriceLineOut(BaseModel):
+    label: str
+    kind: DiscountKind
+    amount: Decimal
+    condition_kind: ConditionKind
+    condition: str = ""
+    source_url: Optional[str] = None
+    data_status: DataStatus
+
+
+class PriceBreakdownOut(BaseModel):
+    list_price: Decimal
+    shipping_fee: Decimal
+    lines: List[PriceLineOut] = []
+    definite_total: Decimal
+    potential_total: Decimal
+    unverifiable_total: Decimal
+    applied_groups: List[str] = []
+    notes: List[str] = []
+
+
+# ─── 政策 ──────────────────────────────────────────────────────
+
+class PolicyOut(BaseModel):
+    scope: PolicyScope
+    category: PolicyCategory
     title: str
-    price: float
-    original_price: Optional[float] = None
-    discount_rate: Optional[float] = None
-    store_name: Optional[str] = None
-    brand: Optional[str] = None
-    category: Optional[str] = None
-    specs: Optional[Dict[str, Any]] = None
-    sales: Optional[str] = None
-    rating: Optional[float] = None
-    review_count: Optional[int] = None
-    delivery: Optional[str] = None
-    url: str
-    images: Optional[List[str]] = []
-    fetched_at: Optional[datetime] = None
-    tags: Optional[List[str]] = []
+    summary: str
+    source_url: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    region: Optional[str] = None
+    data_status: DataStatus
 
 
-class ProductSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=1, max_length=100)
-    platforms: Optional[List[Platform]] = [Platform.JD, Platform.TAOBAO, Platform.TMALL]
-    category: Optional[str] = None
-    min_price: Optional[float] = None
-    max_price: Optional[float] = None
-    sort_by: Optional[str] = "default"  # default | price_asc | price_desc | sales | rating
-    page: int = 1
-    page_size: int = 20
+# ─── Offer ─────────────────────────────────────────────────────
 
-
-class ProductCompareRequest(BaseModel):
-    product_ids: List[str] = Field(..., min_items=2, max_items=6)
-    platform: Optional[Platform] = None
-
-
-class ProductAggregateResult(BaseModel):
-    keyword: str
-    total: int
-    products: List[Product]
-    min_price: Optional[float] = None
-    max_price: Optional[float] = None
-    avg_price: Optional[float] = None
-    platform_distribution: Optional[Dict[str, int]] = None
-    cheapest: Optional[Product] = None
-    highest_rated: Optional[Product] = None
-
-
-class PriceHistory(BaseModel):
-    product_id: str
+class OfferOut(BaseModel):
+    id: str
     platform: Platform
-    prices: List[Dict[str, Any]]  # [{date, price}]
+    platform_product_id: str
+    title: str
+    url: str
+    list_price: Decimal
+    shop_name: Optional[str] = None
+    shop_type: ShopType
+    shop_url: Optional[str] = None
+    brand: Optional[str] = None
+    sku_text: Optional[str] = None
+    images: List[str] = []
+    sales_text: Optional[str] = None
+    shipping_fee: Decimal = Decimal("0")
+    region: Optional[str] = None
+    affiliate: bool = False
+    data_status: DataStatus
+    source: str = ""
+    source_url: Optional[str] = None
+    fetched_at: Optional[datetime] = None
+    verified_at: Optional[datetime] = None
+    credibility: float = 0.5
+    match_confidence: Optional[float] = None
+    match_notes: List[str] = []
+    discounts: List[DiscountOut] = []
+    policies: List[PolicyOut] = []
+    breakdown: Optional[PriceBreakdownOut] = None
 
 
-# ─── Creator / Video Review Schemas ──────────────────────────
-class CreatorProfile(BaseModel):
-    creator_id: str
-    creator_name: str
-    platform: VideoPlatform
-    uid: Optional[str] = None
-    avatar: Optional[str] = None
-    domain: List[str] = []  # e.g. ["GPU", "CPU", "Laptop"]
-    style_tags: List[str] = []  # e.g. ["benchmark", "thermals", "gaming"]
-    credibility_score: float = Field(default=0.8, ge=0.0, le=1.0)
-    follower_count: Optional[int] = None
-    video_count: Optional[int] = None
-    homepage_url: Optional[str] = None
+# ─── 商品组 ────────────────────────────────────────────────────
+
+class CanonicalProductOut(BaseModel):
+    id: str
+    title: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    category: Optional[str] = None
+    specs: dict = {}
+    confidence: float = 1.0
+    warnings: List[str] = []
+    offers: List[OfferOut] = []
+    best_definite_price: Optional[Decimal] = None
 
 
-class VideoReview(BaseModel):
-    video_id: str
-    platform: VideoPlatform
+# ─── 搜索 ──────────────────────────────────────────────────────
+
+class SearchRequest(BaseModel):
+    keyword: str = Field(..., min_length=1, max_length=200)
+    include_demo: bool = False
+    platforms: Optional[List[Platform]] = None
+
+
+class PlatformSearchResult(BaseModel):
+    platform: Platform
+    status: ConnectionStatus
+    message: str
+    offer_count: int = 0
+    elapsed_ms: int = 0
+
+
+class SearchResponse(BaseModel):
+    keyword: str
+    is_link_query: bool = False
+    link_notice: Optional[str] = None
+    groups: List[CanonicalProductOut] = []
+    platform_results: List[PlatformSearchResult] = []
+    has_real_data: bool = False
+    demo_included: bool = False
+    demo_notice: Optional[str] = None
+    generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# ─── 评测 ──────────────────────────────────────────────────────
+
+class CriteriaCheckOut(BaseModel):
+    dimension: str
+    met: bool
+    note: str
+
+
+class ReviewAssessmentOut(BaseModel):
+    checks: List[CriteriaCheckOut] = []
+    score: float
+    recommend_reference: bool
+
+
+class ReviewOut(BaseModel):
+    # model_tested 等字段名与 pydantic 保留前缀冲突，显式关闭保护
+    model_config = ConfigDict(protected_namespaces=())
+
+    id: str
+    platform: ReviewPlatform
+    url: str
     title: str
     creator_name: str
     creator_id: Optional[str] = None
-    thumbnail: Optional[str] = None
-    duration: Optional[int] = None  # seconds
+    creator_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    published_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
     view_count: Optional[int] = None
     like_count: Optional[int] = None
-    coin_count: Optional[int] = None  # bilibili specific
-    published_at: Optional[datetime] = None
-    url: str
-    tags: Optional[List[str]] = []
-    description: Optional[str] = None
-    # Structured review content (extracted from transcript)
-    verdict: Optional[str] = None
-    pros: Optional[List[str]] = []
-    cons: Optional[List[str]] = []
-    scenarios: Optional[List[str]] = []  # suitable use cases
-    test_environment: Optional[str] = None
-    evidence: Optional[List[str]] = []  # key data points
-    related_products: Optional[List[str]] = []
+    model_tested: Optional[str] = None
+    pros: List[str] = []
+    cons: List[str] = []
+    quotes: List[str] = []
+    test_evidence: List[str] = []
+    scenarios: List[str] = []
+    commercial_relation: CommercialRelation
+    curation_status: CurationStatus
+    curated_by: Optional[str] = None
+    curated_at: Optional[datetime] = None
+    curator_notes: Optional[str] = None
+    ai_summary: Optional[str] = None
+    ai_generated_at: Optional[datetime] = None
+    data_status: DataStatus
+    fetched_at: Optional[datetime] = None
+    related_models: List[str] = []
+    relevance_note: Optional[str] = None
+    assessment: Optional[ReviewAssessmentOut] = None
 
 
-class ReviewSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=1, max_length=100)
-    platforms: Optional[List[VideoPlatform]] = [VideoPlatform.BILIBILI, VideoPlatform.DOUYIN]
-    domain: Optional[str] = None
-    creator_whitelist_only: bool = True
-    max_results: int = Field(default=10, le=50)
+class ReviewSubmitRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    """提交评测链接 + 人工整理内容。"""
+
+    url: str = Field(..., min_length=5, max_length=500)
+    title: Optional[str] = None
+    creator_name: Optional[str] = None
+    model_tested: Optional[str] = None
+    pros: List[str] = []
+    cons: List[str] = []
+    quotes: List[str] = []
+    test_evidence: List[str] = []
+    scenarios: List[str] = []
+    commercial_relation: CommercialRelation = CommercialRelation.UNKNOWN
+    curator_notes: Optional[str] = None
+    related_models: List[str] = []
+    submitter: str = "anonymous"
 
 
-class ReviewAggregateResult(BaseModel):
-    keyword: str
-    total: int
-    videos: List[VideoReview]
-    creators: List[CreatorProfile]
-    domain_summary: Optional[str] = None
-    key_findings: Optional[List[str]] = []
+class ReviewCurateRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    status: CurationStatus
+    curator: str = "admin"
+    model_tested: Optional[str] = None
+    pros: Optional[List[str]] = None
+    cons: Optional[List[str]] = None
+    quotes: Optional[List[str]] = None
+    test_evidence: Optional[List[str]] = None
+    scenarios: Optional[List[str]] = None
+    commercial_relation: Optional[CommercialRelation] = None
+    curator_notes: Optional[str] = None
+    related_models: Optional[List[str]] = None
+    relevance_note: Optional[str] = None
 
 
-# ─── Agent Schemas ────────────────────────────────────────────
-class AgentChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=2000)
-    session_id: Optional[str] = None
-    think_mode: ThinkMode = ThinkMode.FAST
-    history: Optional[List[Dict[str, str]]] = []
+class ReviewResolveRequest(BaseModel):
+    url: str = Field(..., min_length=5, max_length=500)
 
 
-class ToolCall(BaseModel):
-    tool_name: str
-    arguments: Dict[str, Any]
-    result_summary: Optional[str] = None
-    duration_ms: Optional[int] = None
-
-
-class AgentChatResponse(BaseModel):
-    session_id: str
-    message: str
-    think_mode: ThinkMode
-    products: Optional[List[Product]] = []
-    reviews: Optional[List[VideoReview]] = []
-    aggregate: Optional[ProductAggregateResult] = None
-    tool_calls: Optional[List[ToolCall]] = []
-    reasoning_steps: Optional[List[str]] = []
-    response_time_ms: Optional[int] = None
-
-
-# ─── Common ───────────────────────────────────────────────────
-class APIResponse(BaseModel):
-    success: bool = True
-    data: Optional[Any] = None
-    message: Optional[str] = None
+class ReviewResolveResponse(BaseModel):
+    ok: bool
+    review: Optional[ReviewOut] = None
     error: Optional[str] = None
+    notice: Optional[str] = None
+
+
+# ─── 推荐 ──────────────────────────────────────────────────────
+
+class RecommendationPreferences(BaseModel):
+    budget_max: Optional[Decimal] = None
+    priority: str = "balanced"  # price | service | balanced
+    scenario: Optional[str] = None
+    region: Optional[str] = None
+
+
+class RecommendationOptionOut(BaseModel):
+    offer_id: str
+    platform: Platform
+    pick_type: str
+    headline: str
+    definite_total: Decimal
+    potential_total: Decimal
+    score: float
+    evidence: List[str] = []
+    conditions: List[str] = []
+    risks: List[str] = []
+
+
+class RecommendationOut(BaseModel):
+    canonical_id: str
+    options: List[RecommendationOptionOut] = []
+    summary: str = ""
+    confidence: float = 0.0
+    missing_data: List[str] = []
+    generated_at: Optional[datetime] = None
+
+
+# ─── 商品详情 / 对比 ───────────────────────────────────────────
+
+class ProductDetailResponse(BaseModel):
+    group: Optional[CanonicalProductOut] = None
+    reviews: List[ReviewOut] = []
+    recommendation: Optional[RecommendationOut] = None
+    demo_included: bool = False
+
+
+class CompareRequest(BaseModel):
+    keyword: str = Field(..., min_length=1, max_length=200)
+    group_ids: List[str] = Field(..., min_length=1, max_length=5)
+    include_demo: bool = False
+    preferences: Optional[RecommendationPreferences] = None
+
+
+class CompareResponse(BaseModel):
+    groups: List[CanonicalProductOut] = []
+    reviews: Dict[str, List[ReviewOut]] = {}
+    recommendations: Dict[str, RecommendationOut] = {}
+    has_real_data: bool = False
+
+
+# ─── 数据来源 ──────────────────────────────────────────────────
+
+class DataSourceInfo(BaseModel):
+    name: str
+    kind: str  # platform_api | review_metadata | curated | demo
+    status: str
+    description: str
+    last_updated: Optional[datetime] = None
+    url: Optional[str] = None
