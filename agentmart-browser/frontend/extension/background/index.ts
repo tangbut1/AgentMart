@@ -23,9 +23,21 @@ import type {
   CompareResponse,
   ExtensionRequest,
   ExtensionResponse,
+  ExtensionNotification,
+  GetSessionResponse,
+  PageFingerprintMessage,
   ReadPageRequest,
   ReadPageResponse,
 } from "../protocol.ts";
+import type { SessionPool } from "../core/session.ts";
+import { revivePool, emptyPool } from "../core/session.ts";
+import {
+  clearActiveOnStartup,
+  handleFingerprint,
+  onTabActivated,
+  onTabRemoved,
+  SESSION_POOL_KEY,
+} from "./session.ts";
 
 /** 两次页面加载之间的间隔。保持人的节奏，不做高频抓取。 */
 const PAGE_PAUSE_MS = 1200;
@@ -287,7 +299,16 @@ async function handleCompare(request: CompareRequest): Promise<CompareResponse> 
 }
 
 chrome.runtime.onMessage.addListener(
-  (message: ExtensionRequest, _sender, sendResponse): boolean => {
+  (
+    message: ExtensionRequest | ExtensionNotification,
+    sender,
+    sendResponse,
+  ): boolean => {
+    // 内容脚本上报的指纹走另一条路：它不需要响应，只要求池子被更新
+    if (message.type === "page-fingerprint") {
+      void handleFingerprint(message as PageFingerprintMessage, sender.tab?.id);
+      return false;
+    }
     void (async (): Promise<void> => {
       let response: ExtensionResponse;
       switch (message.type) {
@@ -295,10 +316,17 @@ chrome.runtime.onMessage.addListener(
           response = { ok: true, pong: true };
           break;
         case "read-page":
-          response = await handleReadPage(message);
+          response = await handleReadPage(message as ReadPageRequest);
           break;
         case "compare-platform":
-          response = await handleCompare(message);
+          response = await handleCompare(message as CompareRequest);
+          break;
+        case "get-session":
+          response = await readSession();
+          break;
+        case "focus-tab":
+          await focusTab((message as { tabId: number }).tabId);
+          response = { ok: true };
           break;
         default:
           response = { ok: false, reason: "未知消息" } as ReadPageResponse;
@@ -308,6 +336,38 @@ chrome.runtime.onMessage.addListener(
     return true;
   },
 );
+
+/** 侧面板直接读 storage.session 也能拿到池子；这里留一个口子给「现在就要」
+ *   的场景（比如刚打开侧面板、storage 事件还没到）。 */
+async function readSession(): Promise<GetSessionResponse> {
+  const pool: SessionPool = await chrome.storage.session
+    .get(SESSION_POOL_KEY)
+    .then((store) => revivePool(store[SESSION_POOL_KEY]))
+    .catch(() => emptyPool());
+  return { ok: true, pool };
+}
+
+async function focusTab(tabId: number): Promise<void> {
+  if (!Number.isInteger(tabId)) return;
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId !== undefined) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+  } catch {
+    // 标签页已经关了：静默失败，侧边栏下一次 storage 事件自己会把这一项撤掉
+  }
+}
+
+// 标签页生命周期 → 池子。这三个事件都不需要 tabs 权限。
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void onTabRemoved(tabId);
+});
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  void onTabActivated(activeInfo);
+});
+void clearActiveOnStartup();
 
 // 点工具栏图标直接开侧边栏，不用用户去菜单里找
 void chrome.sidePanel

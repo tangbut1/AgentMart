@@ -18,6 +18,23 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.jd.com/*",
+        "*://*.3.cn/*",
+        "*://*.taobao.com/*",
+        "*://*.tmall.com/*",
+        "*://*.pinduoduo.com/*",
+        "*://*.yangkeduo.com/*",
+        "*://*.jinritemai.com/*",
+        "*://*.douyin.com/*"
+      ],
+      "js": ["content-session.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "side_panel": {
     "default_path": "sidepanel.html"
   },

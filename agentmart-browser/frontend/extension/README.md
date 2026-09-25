@@ -65,11 +65,15 @@ extension/
 │   ├── manifest.json        # MV3 清单：权限、主机范围、入口
 │   └── icons/               # 图标（构建时由 scripts/make-icons.mjs 生成）
 ├── content/
-│   └── extractPage.ts       # 注入页面的只读抽取函数（DOM 文本字段）
+│   ├── extractPage.ts       # 注入页面的只读抽取函数（DOM 文本字段）
+│   └── session.ts           # 常驻内容脚本：商品页抽轻量指纹报给 background
 ├── background/
-│   └── index.ts             # service worker：开标签页、等加载、抽取、关标签页
+│   ├── index.ts             # service worker：开标签页、等加载、抽取、关标签页
+│   └── session.ts           # service worker：chrome.storage.session 维护会话池
 ├── sidepanel/
 │   ├── App.tsx              # 侧面板，复用 src/components/BrowserCompare.tsx 等
+│   ├── SessionBar.tsx       # 「正在对比 N 个标签页」指示条，点击跳回
+│   ├── useSessionPool.ts    # 读会话池：直接读 storage + 监听 onChanged
 │   ├── main.tsx
 │   └── sidepanel.css
 ├── core/                    # 与后端 app/domain/ 逐条对应的纯逻辑（TypeScript）
@@ -79,6 +83,9 @@ extension/
 │   ├── subsidy.ts           #   国补：两种情形都算出来，不合并
 │   ├── traps.ts             #   防套路：激活不退、非国行、不退不换、运费险
 │   ├── grouping.ts          #   跨平台同款归组（保守匹配）
+│   ├── modelTokens.ts       #   从标题/规格里挑「像型号」的 token
+│   ├── session.ts           #   会话池纯逻辑：聚类、增删、激活（不碰 chrome/DOM）
+│   ├── sessionOffers.ts     #   池子条目 → OfferView（只有侧面板用）
 │   ├── platforms.ts         #   五个平台的搜索/商品 URL 配方
 │   ├── offer.ts / model.ts / serialize.ts / text.ts / index.ts
 ├── protocol.ts              # 侧面板 ↔ service worker 的消息协议
@@ -117,19 +124,54 @@ manifest 里要写死）；侧面板是普通 React 应用，走 Vite 正常拆�
 | --- | --- |
 | `sidePanel` | 侧边栏 |
 | `scripting` | 按需把只读抽取函数注入当前标签页 |
-| `storage` | 存你自己填的收货地和上次读的那一页 |
+| `storage` | 存你自己填的收货地、上次读的那一页，以及跨标签页的会话池 |
 
 主机权限只覆盖五个商城的域名，**没有 `<all_urls>`**。
 明确没有申请的：`tabs`（能看到全部标签页标题）、`cookies`、`webRequest`、
 `debugger`、`history`、`bookmarks`。
 
-**不常驻 content script**：抽取函数由 background 通过
-`chrome.scripting.executeScript` 按需注入，页面不被打扰，也不为一个常驻脚本
-申请额外权限。
+**常驻一个轻量 content script**（`content-session.js`），只跑在五个商城的域名下。
+它干的事很窄：商品页加载完（以及 SPA 换页）时抽一份轻量指纹 —— URL、标题、
+平台、型号 token —— 报给 service worker，让侧边栏不用你手点「读取」就能并排
+展示同款。它只读页面，不点按钮、不提交表单、不读输入框、不读 cookie、
+不改 DOM，也不轮询。
+
+需要按详情页现抽字段时，仍由 background 通过
+`chrome.scripting.executeScript` 按需注入 `extractPage.ts`，走的是原来那条路。
 
 登录状态**只在浏览器自己手里**。扩展不读 cookie，不把登录态发给任何服务端，
 模型也拿不到 cookie、完整鉴权状态或支付信息。页面上的商品文案、商家介绍和评价
 一律当作不可信内容，不当成指令。
+
+---
+
+## 购物会话记忆池（跨标签页自动感知）
+
+阶段一的能力：你在几个平台的同款商品页之间来回切，侧边栏一打开就已经并排摆好，
+全程不用点「读取」。
+
+```
+内容脚本（每个商品页）
+   └─ 抽轻量指纹 ──► service worker
+                       ├─ chrome.storage.session 维护池子（纯 JSON 元数据）
+                       ├─ chrome.tabs.onRemoved  关标签页 → 撤掉那一项
+                       └─ chrome.tabs.onActivated 切标签页 → 标「(当前)」
+侧边栏 ◄── 直接读 storage.session + 监听 onChanged（不等消息，更新更快）
+```
+
+几个设计取舍，都是为了「不把不同的商品说成同款」：
+
+- **锚点固定**：一组的身份取最早进池子那个条目的型号 token，后来加入的只跟它比。
+  用「进池时间」而不是「最近活跃」排序 —— 后者会被「用户切回旧标签页」改写，
+  锚点跟着飘，XM5 和 XM4 就会被并成一组。
+- **认不出型号的自成一组**：两个都没认出型号的页面不会因为「都没认出」而被归到一起。
+- **部分重合必须报警**：组里只要有页面的型号和其他页面不完全一致，侧边栏就带着
+  「规格可能不同」展示，不默默摆成一副能比的样子。
+- **写操作串成一条链**：`storage.session` 的读写是异步的，连关两个标签页时若各自
+  读-改-写，第二个就关不掉。
+
+池子有容量上限（24 个标签页），超出丢最早不活跃的；当前活动的那个不会被丢。
+`chrome.storage.session` 随浏览器会话清空，不落盘、不同步到账号。
 
 ---
 
@@ -141,7 +183,10 @@ npm run test:extension      # node --test extension/tests/*.test.ts
 npm run build:extension     # tsc --noEmit + 打包（typecheck 也在这步）
 ```
 
-扩展侧 135 项单元测试 + manifest/产物校验。跨语言一致性在仓库根跑：
+扩展侧 190 项单元测试 + manifest/产物校验。其中 `session.test.ts` 覆盖会话池的
+聚类/增删/激活/容量，`sessionFlow.test.ts` 用假的 `chrome.storage.session`
+把「内容脚本上报 → service worker 维护池子 → 侧边栏摆出对比」整条路跑通，
+不需要真开浏览器。跨语言一致性在仓库根跑：
 
 ```bash
 cd agentmart-browser

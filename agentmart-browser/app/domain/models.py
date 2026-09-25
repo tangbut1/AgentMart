@@ -179,10 +179,13 @@ class CanonicalProduct:
 
     @property
     def best_definite_price(self) -> Optional[Decimal]:
+        # list_price 为 0 表示「没读到价格」，不是「免费」—— build_offer 抽不到
+        # 价格时给的就是 0。这种条目一旦进 min()，界面会写出「最低确定价 0.00」，
+        # 那是凭空造出来的数，必须先剔掉。与前端 grouping.ts 的 hasPrice 同规则。
         totals = [
             compute_price_breakdown(o).definite_total
             for o in self.offers
-            if o.data_status != DataStatus.DEMO
+            if o.data_status != DataStatus.DEMO and o.list_price > 0
         ]
         return min(totals) if totals else None
 

@@ -80,6 +80,33 @@
   color: var(--primary-deep);
 }
 
+/* 指示条上的平台 chip：比普通 chip 多一个「当前」角标的位置。
+ *  只改间距和字号，颜色沿用上面两条，不另起一套配色。 */
+.sidepanel .chip--tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+}
+
+.sidepanel .sessionbar__now {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--primary-tint);
+  color: var(--primary-deep);
+  font-size: 11px;
+}
+
+.sidepanel .chip--tab .sessionbar__now:first-of-type {
+  background: transparent;
+  color: inherit;
+}
+
+/* 规格可能不同那句提醒。沿用 styles.css 里的 --warn，不另造颜色。 */
+.sidepanel .warn {
+  color: var(--warn);
+}
+
 .sidepanel .purchase-card,
 .sidepanel .panel {
   background: var(--surface);

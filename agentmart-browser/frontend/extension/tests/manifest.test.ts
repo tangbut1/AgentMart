@@ -32,7 +32,12 @@ interface Manifest {
   side_panel: { default_path: string };
   action: { default_title: string; default_icon: Record<string, string> };
   icons: Record<string, string>;
-  content_scripts?: unknown;
+  content_scripts?: Array<{
+    matches: string[];
+    js: string[];
+    run_at: string;
+    all_frames: boolean;
+  }>;
 }
 
 function readManifest(dir: string): Manifest {
@@ -83,8 +88,29 @@ describe("manifest（源文件）", () => {
     }
   });
 
-  it("不常驻 content script（按需注入，不打扰页面）", () => {
-    assert.equal(manifest.content_scripts, undefined);
+  it("常驻 content script 只跑在五个商城域名下", () => {
+    // 阶段一开始常驻一个轻量内容脚本：商品页加载完自己上报一份指纹，
+    // 侧边栏才不用用户手点「读取」。但它只该在这五个商城的域名里跑。
+    const scripts = manifest.content_scripts;
+    assert.ok(Array.isArray(scripts), "manifest 缺少 content_scripts");
+    assert.equal(scripts.length, 1);
+    const entry = scripts[0] as { matches: string[]; js: string[]; run_at: string; all_frames: boolean };
+    assert.deepEqual(entry.js, ["content-session.js"]);
+    assert.equal(entry.run_at, "document_idle");
+    assert.equal(entry.all_frames, false);
+    assert.ok(entry.matches.length > 0);
+    assert.ok(!entry.matches.includes("<all_urls>"));
+    assert.ok(!entry.matches.includes("*://*/*"));
+    for (const match of entry.matches) {
+      assert.match(match, /^\*:\/\/\*\.[^*]+\/\*$/, `content script 匹配写法不最小：${match}`);
+    }
+    const joined = entry.matches.join(" ");
+    for (const marker of ["jd.com", "taobao.com", "tmall.com", "pinduoduo.com", "jinritemai.com"]) {
+      assert.ok(joined.includes(marker), `content script 没覆盖 ${marker}`);
+    }
+    // 常驻脚本也不能顺手多要权限
+    assert.ok(!manifest.permissions.includes("tabs"));
+    assert.ok(!manifest.permissions.includes("cookies"));
   });
 
   it("主机权限只覆盖五个商城，且没有 <all_urls>", () => {
@@ -180,9 +206,12 @@ describe("构建产物 dist-extension", () => {
     // 只看扩展自己写的注入源码，而不是整个 bundle：bundle 里含有从页面
     // 解析出来的优惠文案（"支付立减""微信支付"），那是要读的文本，
     // 不是要做的动作。真正要守的边界是"不对页面做任何写操作"。
-    const sources = ["content/extractPage.ts", "background/index.ts"].map((rel) =>
-      readFileSync(join(EXT_DIR, rel), "utf8"),
-    );
+    const sources = [
+      "content/extractPage.ts",
+      "content/session.ts",
+      "background/index.ts",
+      "background/session.ts",
+    ].map((rel) => readFileSync(join(EXT_DIR, rel), "utf8"));
     for (const source of sources) {
       assert.ok(!/\.click\s*\(/.test(source), "出现了点击页面元素的动作");
       assert.ok(!/\.submit\s*\(/.test(source), "出现了提交表单的动作");
@@ -192,10 +221,36 @@ describe("构建产物 dist-extension", () => {
     }
   });
 
+  it("content-session.js 也是单个 classic script，不含 ESM import/export", () => {
+    if (!built) assert.fail("dist-extension 不存在：请先跑 npm run build:extension");
+    const source = readFileSync(join(DIST_DIR, "content-session.js"), "utf8");
+    assert.ok(source.length > 0, "content-session.js 是空文件");
+    assert.ok(!/^\s*import\s/m.test(source), "content-session.js 里还有 import 语句");
+    assert.ok(!/^\s*export\s/m.test(source), "content-session.js 里还有 export 语句");
+    assert.ok(!/\bimport\s*\(/.test(source), "content-session.js 里还有动态 import");
+    // manifest 里声明了这个文件，它就必须真的在产物里
+    const dist = readManifest(DIST_DIR);
+    for (const entry of dist.content_scripts ?? []) {
+      for (const file of entry.js) {
+        assert.ok(existsSync(join(DIST_DIR, file)), `产物缺少 ${file}`);
+      }
+    }
+  });
+
+  it("常驻内容脚本的产物也很小 —— 它挂在每个商品页上，不能拖慢页面", () => {
+    if (!built) assert.fail("dist-extension 不存在：请先跑 npm run build:extension");
+    const size = statSync(join(DIST_DIR, "content-session.js")).size;
+    // 抽出字段 + 型号识别 + 池子逻辑。超过 64KB 说明把侧面板那一套
+    // （React、到手价计算）误打进来了，那不该出现在每个商品页上。
+    assert.ok(size > 0 && size < 64 * 1024, `content-session.js 有 ${size} 字节，太大了`);
+  });
+
   it("产物不伪装自动化身份", () => {
     if (!built) assert.fail("dist-extension 不存在：请先跑 npm run build:extension");
-    const source = readFileSync(join(DIST_DIR, "background.js"), "utf8");
-    assert.ok(!/navigator\.webdriver\s*=\s*true/.test(source));
-    assert.ok(!/delete\s+navigator\.webdriver/.test(source));
+    for (const file of ["background.js", "content-session.js"]) {
+      const source = readFileSync(join(DIST_DIR, file), "utf8");
+      assert.ok(!/navigator\.webdriver\s*=\s*true/.test(source), `${file} 伪装了 webdriver`);
+      assert.ok(!/delete\s+navigator\.webdriver/.test(source), `${file} 删除了 webdriver`);
+    }
   });
 });

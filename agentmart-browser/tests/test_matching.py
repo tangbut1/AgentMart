@@ -8,7 +8,7 @@ from app.domain.matching import (
     hard_conflict,
     match_score,
 )
-from app.domain.models import Offer
+from app.domain.models import CanonicalProduct, Offer
 
 
 def _offer(title: str, pid: str = "1") -> Offer:
@@ -103,3 +103,31 @@ def test_different_brands_never_merge():
     ]
     groups = group_offers(offers)
     assert len(groups) == 2
+
+
+def test_best_definite_price_ignores_missing_price():
+    """没读到价格的条目 list_price 是 0，不是「免费」。
+
+    它一旦参与 min()，界面会写出「最低确定价 0.00」—— 那是凭空造出来的数。
+    """
+    cluster = CanonicalProduct(
+        id="g1",
+        title="Apple iPhone 15 Pro",
+        offers=[
+            _offer("Apple iPhone 15 Pro 256GB", "a"),
+            _offer("Apple iPhone 15 Pro 256GB", "b"),
+        ],
+    )
+    cluster.offers[0].list_price = 2499
+    cluster.offers[1].list_price = 0  # 没抽到价格
+    assert cluster.best_definite_price == cluster.offers[0].list_price
+
+
+def test_best_definite_price_is_none_when_all_missing():
+    cluster = CanonicalProduct(
+        id="g2",
+        title="Apple iPhone 15 Pro",
+        offers=[_offer("Apple iPhone 15 Pro 256GB", "a")],
+    )
+    cluster.offers[0].list_price = 0
+    assert cluster.best_definite_price is None

@@ -6,9 +6,18 @@ import type {
   GroupView,
   OfferView,
 } from "../../src/lib/browserApi.ts";
-import { PLATFORM_LABELS, buildCompareGroups, modelTokens, otherPlatforms } from "../core/index.ts";
+import {
+  PLATFORM_LABELS,
+  autoCompareFromPool,
+  buildCompareGroups,
+  modelTokens,
+  otherPlatforms,
+  poolTabViews,
+} from "../core/index.ts";
 import type { Platform } from "../core/enums.ts";
-import type { CompareResponse, ReadPageResponse } from "../protocol.ts";
+import type { CompareResponse, FocusTabRequest, ReadPageResponse } from "../protocol.ts";
+import SessionBar from "./SessionBar.tsx";
+import { useSessionPool } from "./useSessionPool.ts";
 
 /** 侧面板自己的状态在 chrome.storage.session 里留一份，
  *  关掉再打开不会全丢（service worker 被回收也不影响）。 */
@@ -38,6 +47,7 @@ export default function App() {
   const [notes, setNotes] = useState<string[]>([]);
   const [reading, setReading] = useState(false);
   const [comparing, setComparing] = useState<Platform | null>(null);
+  const { pool } = useSessionPool();
 
   useEffect(() => {
     void chrome.storage.session.get([REGION_KEY, LAST_PAGE_KEY]).then((store) => {
@@ -49,6 +59,22 @@ export default function App() {
         setProblems(saved.problems ?? []);
       }
     });
+  }, []);
+
+  /** 会话池里的标签页。用户没点任何按钮，这一栏也该自己出现。 */
+  const sessionTabs = useMemo(() => poolTabViews(pool), [pool]);
+
+  /** 从池子里自动生成同款对比 —— 全程 0 次点击。
+   *
+   *  逻辑在 core/sessionOffers.ts 里，那边有单元测试：能进同一个 cluster 的
+   *  才会被摆到一起，认不出同款的页面各自成组，绝不混排。 */
+  const sessionGroups = useMemo<GroupView[]>(
+    () => autoCompareFromPool(pool, primary, region),
+    [pool, primary, region],
+  );
+
+  const focusTab = useCallback((tabId: number) => {
+    void chrome.runtime.sendMessage({ type: "focus-tab", tabId } satisfies FocusTabRequest);
   }, []);
 
   const readCurrentPage = useCallback(async () => {
@@ -153,6 +179,12 @@ export default function App() {
           优惠需要您本人在平台上领取。
         </p>
       </header>
+
+      <SessionBar
+        tabs={sessionTabs}
+        clusterCount={pool.clusters.length}
+        onFocus={focusTab}
+      />
 
       <section className="sidepanel__section">
         <div className="row gap-8 wrap" style={{ justifyContent: "space-between" }}>
@@ -260,6 +292,15 @@ export default function App() {
               ))}
             </ul>
           </Notice>
+        </section>
+      )}
+
+      {sessionGroups.length > 0 && groups.length === 0 && (
+        <section className="sidepanel__section sidepanel__scroll">
+          <div className="small muted">
+            自动识别到的同款（来自您打开着的标签页，未手动读取）
+          </div>
+          <BrowserCompare groups={sessionGroups} />
         </section>
       )}
 

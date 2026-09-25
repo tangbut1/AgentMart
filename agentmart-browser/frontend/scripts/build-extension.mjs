@@ -1,16 +1,18 @@
 /** 打包 Chrome/Edge MV3 扩展。
  *
- *  为什么要一个脚本而不是直接 vite build：MV3 的 service worker 必须是
- *  **单个 classic script**，不能用 ESM import，也不能拆出共享 chunk。所以
- *  background 单独构建并内联成一个文件；侧面板是普通 React 应用，可以正常
- *  拆包。
+ *  为什么要一个脚本而不是直接 vite build：MV3 的 service worker 和 content
+ *  script 都必须是**单个 classic script**，不能用 ESM import，也不能拆出共享
+ *  chunk。所以 background 和 content script 各自单独构建并内联成一个文件；
+ *  侧面板是普通 React 应用，可以正常拆包。
  *
- *  manifest.json 里不能写哈希文件名，所以 background.js 用固定名输出，
+ *  manifest.json 里不能写哈希文件名，所以这两个脚本都用固定名输出，
  *  侧面板的 HTML 由 Vite 自己注入带哈希的资源。
  *
- *  本版本**不常驻 content script**：抽取函数由 background 通过
- *  chrome.scripting.executeScript 按需注入，页面不被打扰，也不需要在
- *  manifest 里为一个常驻脚本申请额外权限。
+ *  content script 是常驻的：它负责在商品页加载完（以及 SPA 换页）时把一份
+ *  轻量指纹报给 service worker，让侧边栏不用用户手点「读取」就能并排展示
+ *  同款。它只跑在 manifest 列出的五个平台域名下，且只读页面、不碰账号信息。
+ *  需要按详情页现抽字段时，仍由 background 用 chrome.scripting.executeScript
+ *  按需注入 extractPage.ts，不依赖这个常驻脚本。
  *
  *  用法：
  *    node scripts/build-extension.mjs                     # → dist-extension/
@@ -71,7 +73,24 @@ await build({
   },
 });
 
-// 2) 侧面板：HTML 入口 + React
+// 2) 常驻内容脚本：同样单个 IIFE，不拆 chunk、不动态 import
+await build({
+  ...SHARED,
+  build: {
+    ...SHARED.build,
+    rollupOptions: {
+      input: join(EXT_DIR, "content", "session.ts"),
+      output: {
+        format: "iife",
+        inlineDynamicImports: true,
+        entryFileNames: "content-session.js",
+      },
+      preserveEntrySignatures: false,
+    },
+  },
+});
+
+// 3) 侧面板：HTML 入口 + React
 await build({
   ...SHARED,
   // root 指到 extension/，HTML 就会直接落在产物根目录，
@@ -93,7 +112,7 @@ await build({
   },
 });
 
-// 3) 静态资源（manifest + 图标）原样拷进去
+// 4) 静态资源（manifest + 图标）原样拷进去
 await cp(join(EXT_DIR, "static"), OUT_DIR, { recursive: true });
 
 if (DEV) {
