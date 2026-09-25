@@ -78,8 +78,9 @@ extension/
 │   └── sidepanel.css
 ├── core/                    # 与后端 app/domain/ 逐条对应的纯逻辑（TypeScript）
 │   ├── money.ts             #   整数「分」+ 银行家舍入，和 Python Decimal 一致
-│   ├── discount.ts          #   优惠文案解释（门槛/比例/封顶）
-│   ├── pricing.ts           #   确定价 / 潜在价 / 待核实价 三层拆解
+│   ├── discount.ts          #   优惠文案解释（门槛/比例/封顶/归属层级/确定性）
+│   ├── pricing.ts           #   确定价 / 潜在价 / 待核实价 + 公开轨 / 我的轨
+│   ├── couponTree.ts        #   优惠券树：按层级摊开，标出 counted / beaten_by
 │   ├── subsidy.ts           #   国补：两种情形都算出来，不合并
 │   ├── traps.ts             #   防套路：激活不退、非国行、不退不换、运费险
 │   ├── grouping.ts          #   跨平台同款归组（保守匹配）
@@ -93,7 +94,7 @@ extension/
 └── tests/
     ├── *.test.ts            # node --test 单元测试
     ├── manifest.test.ts     # manifest 与构建产物校验
-    ├── corpus/page-fields.json   # 与后端共用的 25 条页面语料
+    ├── corpus/page-fields.json   # 与后端共用的 27 条页面语料
     └── parity-emit.ts       # 供 Python 侧一致性校验调用
 ```
 

@@ -1742,6 +1742,7 @@ class ShoppingAgent:
                     "confidence": canonical.confidence,
                     "warnings": canonical.warnings,
                     "best_definite_price": money_or_none(canonical.best_definite_price),
+                    "best_public_price": money_or_none(canonical.best_public_price),
                     "offers": rows,
                 }
             )

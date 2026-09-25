@@ -98,6 +98,7 @@ export function buildCompareGroups(primary: OfferView, candidates: OfferView[]):
     confidence,
     warnings,
     best_definite_price: bestDefinitePrice(offers),
+    best_public_price: bestPublicPrice(offers),
     offers,
   };
   return { groups: [group], unmatched };
@@ -116,6 +117,16 @@ function bestDefinitePrice(offers: readonly OfferView[]): string | null {
   const totals = offers
     .filter(hasPrice)
     .map((offer) => Number(offer.breakdown.definite_total))
+    .filter((value) => Number.isFinite(value));
+  if (totals.length === 0) return null;
+  return Math.min(...totals).toFixed(2);
+}
+
+/** 公开轨上的最低到手价（与后端 CanonicalProduct.best_public_price 同规则）。 */
+function bestPublicPrice(offers: readonly OfferView[]): string | null {
+  const totals = offers
+    .filter(hasPrice)
+    .map((offer) => Number(offer.breakdown.public_total))
     .filter((value) => Number.isFinite(value));
   if (totals.length === 0) return null;
   return Math.min(...totals).toFixed(2);

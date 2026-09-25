@@ -15,7 +15,14 @@
         "selfOperatedHint": true,
         "skuText": "颜色：黑色；容量：128GB",
         "couponTexts": [],
-        "policyTexts": ["7天无理由退货", "全国联保", "退货运费险", "假一赔十", "可开发票", "价保30天"],
+        "policyTexts": [
+          "7天无理由退货",
+          "全国联保",
+          "退货运费险",
+          "假一赔十",
+          "可开发票",
+          "价保30天"
+        ],
         "regionText": "江苏省",
         "salesText": "已售 1200 件",
         "evidence": {
@@ -38,11 +45,19 @@
         "shopName": "索尼官方旗舰店",
         "selfOperatedHint": false,
         "skuText": "颜色：银色",
-        "couponTexts": ["满2000减200 已领取", "店铺优惠券 满1000减50 去领取"],
-        "policyTexts": ["7天无理由退货", "运费险"],
+        "couponTexts": [
+          "满2000减200 已领取",
+          "店铺优惠券 满1000减50 去领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "运费险"
+        ],
         "regionText": null,
         "salesText": "月销 3000+",
-        "evidence": { "price": "selector :: 2899.00" }
+        "evidence": {
+          "price": "selector :: 2899.00"
+        }
       }
     },
     {
@@ -58,8 +73,13 @@
         "shopName": "安克官方旗舰店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["满1000减100 已领取"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "满1000减100 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": null,
         "salesText": null,
         "evidence": {}
@@ -78,11 +98,18 @@
         "shopName": "dyson官方旗舰店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["限时活动 8.5折 已领取"],
-        "policyTexts": ["7天无理由退货", "运费险"],
+        "couponTexts": [
+          "限时活动 8.5折 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 1234.56" }
+        "evidence": {
+          "price": "selector :: 1234.56"
+        }
       }
     },
     {
@@ -98,11 +125,19 @@
         "shopName": "小米手机数码专营店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["已抢光 满200减30", "支付宝支付立减20元"],
-        "policyTexts": ["7天无理由退货", "退货包运费"],
+        "couponTexts": [
+          "已抢光 满200减30",
+          "支付宝支付立减20元"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货包运费"
+        ],
         "regionText": null,
         "salesText": "已拼 10万+ 件",
-        "evidence": { "price": "selector :: 129.90" }
+        "evidence": {
+          "price": "selector :: 129.90"
+        }
       }
     },
     {
@@ -118,11 +153,20 @@
         "shopName": "海尔京东自营旗舰店",
         "selfOperatedHint": true,
         "skuText": "能效等级：一级",
-        "couponTexts": ["国补15% 限江苏省用户", "以旧换新补贴 减300元"],
-        "policyTexts": ["7天无理由退货", "退货运费险", "全国联保"],
+        "couponTexts": [
+          "国补15% 限江苏省用户",
+          "以旧换新补贴 减300元"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险",
+          "全国联保"
+        ],
         "regionText": "江苏省",
         "salesText": "已售 800 件",
-        "evidence": { "price": "selector :: 4999.00" }
+        "evidence": {
+          "price": "selector :: 4999.00"
+        }
       }
     },
     {
@@ -138,11 +182,18 @@
         "shopName": "海尔京东自营旗舰店",
         "selfOperatedHint": true,
         "skuText": "能效等级：一级",
-        "couponTexts": ["国补15% 限江苏省用户"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "国补15% 限江苏省用户"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": "浙江省",
         "salesText": null,
-        "evidence": { "price": "selector :: 4999.00" }
+        "evidence": {
+          "price": "selector :: 4999.00"
+        }
       }
     },
     {
@@ -158,11 +209,17 @@
         "shopName": "格力官方旗舰店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["国补15% 限江苏省用户"],
-        "policyTexts": ["7天无理由退货"],
+        "couponTexts": [
+          "国补15% 限江苏省用户"
+        ],
+        "policyTexts": [
+          "7天无理由退货"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 2899.00" }
+        "evidence": {
+          "price": "selector :: 2899.00"
+        }
       }
     },
     {
@@ -178,11 +235,19 @@
         "shopName": "华为官方旗舰店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["国家补贴 减500元", "百亿补贴 限时抢购"],
-        "policyTexts": ["7天无理由退货", "运费险"],
+        "couponTexts": [
+          "国家补贴 减500元",
+          "百亿补贴 限时抢购"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "运费险"
+        ],
         "regionText": "广东省",
         "salesText": null,
-        "evidence": { "price": "selector :: 6999.00" }
+        "evidence": {
+          "price": "selector :: 6999.00"
+        }
       }
     },
     {
@@ -198,11 +263,18 @@
         "shopName": "美的京东自营旗舰店",
         "selfOperatedHint": true,
         "skuText": null,
-        "couponTexts": ["国补15% 限江苏省"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "国补15% 限江苏省"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": "江苏省",
         "salesText": null,
-        "evidence": { "price": "selector :: 2199.00" }
+        "evidence": {
+          "price": "selector :: 2199.00"
+        }
       }
     },
     {
@@ -219,10 +291,16 @@
         "selfOperatedHint": false,
         "skuText": null,
         "couponTexts": [],
-        "policyTexts": ["激活后不支持7天无理由退货", "7天无理由退货", "运费险"],
+        "policyTexts": [
+          "激活后不支持7天无理由退货",
+          "7天无理由退货",
+          "运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 8999.00" }
+        "evidence": {
+          "price": "selector :: 8999.00"
+        }
       }
     },
     {
@@ -239,10 +317,15 @@
         "selfOperatedHint": false,
         "skuText": "版本：港版",
         "couponTexts": [],
-        "policyTexts": ["7天无理由退货", "运费险"],
+        "policyTexts": [
+          "7天无理由退货",
+          "运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 5299.00" }
+        "evidence": {
+          "price": "selector :: 5299.00"
+        }
       }
     },
     {
@@ -259,10 +342,15 @@
         "selfOperatedHint": false,
         "skuText": null,
         "couponTexts": [],
-        "policyTexts": ["全国联保", "可开发票"],
+        "policyTexts": [
+          "全国联保",
+          "可开发票"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 9.90" }
+        "evidence": {
+          "price": "selector :: 9.90"
+        }
       }
     },
     {
@@ -279,10 +367,15 @@
         "selfOperatedHint": false,
         "skuText": null,
         "couponTexts": [],
-        "policyTexts": ["特价商品不退不换", "运费险"],
+        "policyTexts": [
+          "特价商品不退不换",
+          "运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 199.00" }
+        "evidence": {
+          "price": "selector :: 199.00"
+        }
       }
     },
     {
@@ -311,7 +404,9 @@
         ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 12999.00" }
+        "evidence": {
+          "price": "selector :: 12999.00"
+        }
       }
     },
     {
@@ -333,7 +428,9 @@
         ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 100.00" }
+        "evidence": {
+          "price": "selector :: 100.00"
+        }
       }
     },
     {
@@ -350,7 +447,10 @@
         "selfOperatedHint": false,
         "skuText": null,
         "couponTexts": [],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": null,
         "salesText": null,
         "evidence": {}
@@ -389,11 +489,18 @@
         "shopName": "TCL京东自营旗舰店",
         "selfOperatedHint": true,
         "skuText": null,
-        "couponTexts": ["国补15% 限江苏省"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "国补15% 限江苏省"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": "配送至 江苏省",
         "salesText": null,
-        "evidence": { "price": "selector :: 3999.00" }
+        "evidence": {
+          "price": "selector :: 3999.00"
+        }
       }
     },
     {
@@ -416,10 +523,17 @@
           "国补15% 限上海市",
           "已失效 满500减20"
         ],
-        "policyTexts": ["7天无理由退货", "退货运费险", "全国联保"],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险",
+          "全国联保"
+        ],
         "regionText": "上海市",
         "salesText": "月销 500",
-        "evidence": { "price": "selector :: 1399.00", "coupons": "满1000减100 已领取" }
+        "evidence": {
+          "price": "selector :: 1399.00",
+          "coupons": "满1000减100 已领取"
+        }
       }
     },
     {
@@ -435,11 +549,18 @@
         "shopName": "配件工厂店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["8.5折 已领取"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "8.5折 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 5.00" }
+        "evidence": {
+          "price": "selector :: 5.00"
+        }
       }
     },
     {
@@ -455,11 +576,18 @@
         "shopName": "照明专营店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["国补15%"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "国补15%"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 2.30" }
+        "evidence": {
+          "price": "selector :: 2.30"
+        }
       }
     },
     {
@@ -475,11 +603,18 @@
         "shopName": "配件工厂店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["已领取 减200元"],
-        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "couponTexts": [
+          "已领取 减200元"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "退货运费险"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 99.00" }
+        "evidence": {
+          "price": "selector :: 99.00"
+        }
       }
     },
     {
@@ -495,11 +630,101 @@
         "shopName": "膜法工场专营店",
         "selfOperatedHint": false,
         "skuText": null,
-        "couponTexts": ["已领取 满99.5减10", "店铺券 优惠19.99元"],
-        "policyTexts": ["7天无理由退货"],
+        "couponTexts": [
+          "已领取 满99.5减10",
+          "店铺券 优惠19.99元"
+        ],
+        "policyTexts": [
+          "7天无理由退货"
+        ],
         "regionText": null,
         "salesText": null,
-        "evidence": { "price": "selector :: 50.00" }
+        "evidence": {
+          "price": "selector :: 50.00"
+        }
+      }
+    },
+    {
+      "name": "coupon-page-activity-public-track",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100012043978.html",
+        "title": "Apple iPhone 15 (A3092) 128GB 黑色 支持移动联通电信5G 双卡双待",
+        "priceText": "¥3299.00",
+        "priceSource": "dom",
+        "shopName": "Apple产品京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": "颜色：黑色；容量：128GB",
+        "couponTexts": [
+          "限时秒杀 优惠300元",
+          "店铺券 满1000减50 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "全国联保"
+        ],
+        "regionText": "江苏省",
+        "salesText": "已售 1200 件",
+        "evidence": {
+          "price": "selector :: ¥3299.00"
+        }
+      }
+    },
+    {
+      "name": "coupon-same-layer-mutual-exclusion",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=678901234568",
+        "title": "Anker 65W 氮化镓充电器 双口快充",
+        "priceText": "129.00",
+        "priceSource": "dom",
+        "shopName": "anker旗舰店",
+        "selfOperatedHint": false,
+        "skuText": "颜色：白色",
+        "couponTexts": [
+          "店铺券 满100减10 已领取",
+          "店铺券 满100减20 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货"
+        ],
+        "regionText": null,
+        "salesText": "月销 800+",
+        "evidence": {
+          "price": "selector :: 129.00"
+        }
+      }
+    },
+    {
+      "name": "coupon-platform-and-shop-stack",
+      "platform": "tmall",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=678901234569",
+        "title": "Sony WH-1000XM5 头戴式无线降噪耳机 蓝牙5.2",
+        "priceText": "2899.00",
+        "priceSource": "dom",
+        "shopName": "索尼官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": "颜色：银色",
+        "couponTexts": [
+          "跨店每满300减40 已领取",
+          "店铺券 满2000减200 已领取"
+        ],
+        "policyTexts": [
+          "7天无理由退货",
+          "运费险"
+        ],
+        "regionText": null,
+        "salesText": "月销 3000+",
+        "evidence": {
+          "price": "selector :: 2899.00"
+        }
       }
     }
   ]

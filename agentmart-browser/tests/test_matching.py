@@ -1,14 +1,22 @@
 """规格匹配测试：核心是「不错配」。"""
 from __future__ import annotations
 
-from app.domain.enums import Platform
+from decimal import Decimal
+
+from app.domain.enums import (
+    ConditionKind,
+    DiscountKind,
+    DiscountLayer,
+    PriceCertainty,
+    Platform,
+)
 from app.domain.matching import (
     extract_signature,
     group_offers,
     hard_conflict,
     match_score,
 )
-from app.domain.models import CanonicalProduct, Offer
+from app.domain.models import CanonicalProduct, Discount, Offer
 
 
 def _offer(title: str, pid: str = "1") -> Offer:
@@ -131,3 +139,44 @@ def test_best_definite_price_is_none_when_all_missing():
     )
     cluster.offers[0].list_price = 0
     assert cluster.best_definite_price is None
+
+
+def test_best_public_price_ignores_account_only_coupons():
+    """跨平台比价要拿公开轨比。
+
+    我的轨里含「我账号里的券」。A 平台标价高但有张我能用的券，B 平台标价
+    低却没有 —— 用我的轨比会判 A 便宜，那比的是账号差异，不是商品差异。
+    """
+    cluster = CanonicalProduct(
+        id="g3",
+        title="Apple iPhone 15 Pro",
+        offers=[
+            _offer("Apple iPhone 15 Pro 256GB", "a"),
+            _offer("Apple iPhone 15 Pro 256GB", "b"),
+        ],
+    )
+    cluster.offers[0].list_price = 2599  # A：标价高，但有我能用的券
+    cluster.offers[0].discounts = [
+        Discount(kind=DiscountKind.COUPON, label="店铺券 满2000减150 已领取", amount=150,
+                 condition_kind=ConditionKind.UNCONDITIONAL,
+                 certainty=PriceCertainty.ACCOUNT_COUPON, layer=DiscountLayer.SHOP),
+    ]
+    cluster.offers[1].list_price = 2499  # B：标价低，没有券
+    # 公开轨：B 便宜（A 那张券是账号权益，换个人就没了）
+    assert cluster.best_public_price == Decimal("2499.00")
+    # 我的轨：A 反而便宜 —— 这正是不能拿它跨平台比的原因
+    assert cluster.best_definite_price == Decimal("2449.00")
+
+
+def test_best_public_price_ignores_missing_price():
+    cluster = CanonicalProduct(
+        id="g4",
+        title="Apple iPhone 15 Pro",
+        offers=[
+            _offer("Apple iPhone 15 Pro 256GB", "a"),
+            _offer("Apple iPhone 15 Pro 256GB", "b"),
+        ],
+    )
+    cluster.offers[0].list_price = 2499
+    cluster.offers[1].list_price = 0
+    assert cluster.best_public_price == Decimal("2499.00")

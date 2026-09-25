@@ -11,7 +11,14 @@
 
 import type { Cents } from "./money.ts";
 import { decimalStr, decimalToCents } from "./money.ts";
-import type { ConditionKind, DiscountKind, PolicyCategory, PolicyScope, ShopType } from "./enums.ts";
+import type {
+  ConditionKind,
+  DiscountKind,
+  DiscountLayer,
+  PolicyCategory,
+  PolicyScope,
+  ShopType,
+} from "./enums.ts";
 import { truncate } from "./text.ts";
 
 // ─── 关键词表 ──────────────────────────────────────────────────
@@ -31,6 +38,10 @@ const ACTION_HINTS = [
   "抢券",
 ];
 const UNAVAILABLE_HINTS = ["已抢光", "已过期", "不可用", "已失效", "暂不可用"];
+// 表示"页面活动价，已经反映在当前标价里"的措辞 —— 这类优惠谁来看都成立，
+// 属于公开轨。必须排在"已领取/可用"之后判断："限时活动 8.5折 已领取"里
+// 同时含"限时活动"和"已领取"，它是你账号下的券，不是公开活动。
+const PAGE_ACTIVITY_HINTS = ["直降", "秒杀", "活动价", "限时活动", "满减活动", "已减", "促销价"];
 const SUBSIDY_HINTS = [
   "国补",
   "国家补贴",
@@ -70,7 +81,38 @@ export interface CouponReading {
   /** 门槛原文，如 "100" 或 "100.5"；展示用，不做两位小数补齐 */
   threshold_text: string | null;
   certainty: "page_public" | "account_coupon" | "conditional" | "prepayment" | "unverifiable";
+  /** 优惠归属层级：同一层内的券互斥，只取最优 */
+  layer: DiscountLayer;
   reason: string;
+}
+
+// ─── 优惠归属层级 ──────────────────────────────────────────────
+//
+// 层级决定互斥：同一层里的券只算一张。判据全部来自优惠自己的文案，
+// 文案没写的归 product 层（最保守：和商品层优惠挤在一个池里只取最优）。
+//
+// 顺序很重要：先看 kind（包邮/补贴/支付是结构化的，不会被文案骗），
+// 再看文案里的层级词。文案层级词里平台优先于店铺，因为"跨店满减"
+// 同时含"店"字，先匹配店铺会把它错归到店铺层。
+const SHOP_LAYER_HINTS = ["店铺券", "店内券", "店铺满减", "店铺优惠", "本店", "店内"];
+const PLATFORM_LAYER_HINTS = [
+  "平台券",
+  "跨店",
+  "每满",
+  "平台满减",
+  "平台优惠",
+  "购物券",
+  "平台补贴",
+];
+
+/** 从优惠文案推断归属层级。判不出来就归商品层，绝不猜一个更松的。 */
+export function discountLayer(text: string, kind: DiscountKind): DiscountLayer {
+  if (kind === "free_shipping") return "shipping";
+  if (kind === "subsidy" || kind === "trade_in") return "subsidy";
+  if (kind === "payment") return "payment";
+  if (PLATFORM_LAYER_HINTS.some((hint) => text.includes(hint))) return "platform";
+  if (SHOP_LAYER_HINTS.some((hint) => text.includes(hint))) return "shop";
+  return "product";
 }
 
 /** 解释一条优惠文案。看不懂就返回 null（不猜）。 */
@@ -82,6 +124,7 @@ export function interpretCouponText(text: string): CouponReading | null {
   let thresholdText: string | null = null;
   let amount: Cents | null = null;
   let percentText: string | null = null;
+  let layer: DiscountLayer = "product";
 
   const thresholdMatch = raw.match(THRESHOLD_RE);
   if (thresholdMatch) {
@@ -110,6 +153,7 @@ export function interpretCouponText(text: string): CouponReading | null {
         threshold: null,
         threshold_text: null,
         certainty: "unverifiable",
+        layer: "subsidy",
         reason: "页面提到补贴但未给出可核实金额，资格需本人核实",
       };
     }
@@ -121,6 +165,7 @@ export function interpretCouponText(text: string): CouponReading | null {
     : anyHint(raw, PAYMENT_HINTS)
       ? "payment"
       : "coupon";
+  layer = discountLayer(raw, kind);
 
   if (anyHint(raw, UNAVAILABLE_HINTS)) {
     return {
@@ -131,6 +176,7 @@ export function interpretCouponText(text: string): CouponReading | null {
       threshold,
       threshold_text: thresholdText,
       certainty: "unverifiable",
+      layer,
       reason: "页面显示该优惠当前不可用",
     };
   }
@@ -145,6 +191,7 @@ export function interpretCouponText(text: string): CouponReading | null {
       threshold,
       threshold_text: thresholdText,
       certainty: "unverifiable",
+      layer,
       reason: "补贴资格需本人核实（地区/品类/售价门槛/是否已领取）",
     };
   }
@@ -161,7 +208,25 @@ export function interpretCouponText(text: string): CouponReading | null {
       threshold,
       threshold_text: thresholdText,
       certainty: "account_coupon",
+      layer,
       reason: "页面显示该优惠已可用于当前商品",
+    };
+  }
+
+  if (anyHint(raw, PAGE_ACTIVITY_HINTS)) {
+    // 已经反映在当前标价里的页面活动：谁来看都成立，进公开轨。
+    // 判据必须是页面自己写了"直降/秒杀/活动价"，没有就不能升档 ——
+    // 少算一点公开抵扣只会让公开价偏高，绝不会承诺一个拿不到的价。
+    return {
+      raw_text: raw,
+      kind,
+      amount,
+      percent_text: percentText,
+      threshold,
+      threshold_text: thresholdText,
+      certainty: "page_public",
+      layer,
+      reason: "页面显示为当前标价已包含的活动优惠",
     };
   }
 
@@ -173,6 +238,7 @@ export function interpretCouponText(text: string): CouponReading | null {
     threshold,
     threshold_text: thresholdText,
     certainty: "conditional",
+    layer,
     reason: "页面显示可领/需满足条件，适用范围与叠加关系待确认",
   };
 }

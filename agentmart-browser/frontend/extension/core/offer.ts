@@ -104,6 +104,8 @@ export function buildOffer(
       condition: reason,
       condition_kind: condition,
       stack_group: null,
+      layer: reading.layer,
+      certainty: reading.certainty,
       max_amount: null,
       region_limit: null,
       eligibility: null,

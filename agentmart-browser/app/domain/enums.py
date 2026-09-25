@@ -75,6 +75,70 @@ class ConditionKind(str, Enum):
     UNVERIFIABLE = "unverifiable"    # 规则无法核实，不得计入确定价
 
 
+class DiscountLayer(str, Enum):
+    """优惠的归属层级 —— 决定它和别的优惠是否互斥。
+
+    同一层里的优惠几乎一定不能叠加（一个商品页不会同时让你用两张店铺券），
+    不同层通常可以（商品直降 + 店铺券 + 平台券 + 支付立减）。
+
+    层级只从优惠自己的文案推断，页面没写的归到 PRODUCT 层：那是最保守的
+    选择 —— 认不出归属的优惠和商品层优惠挤在一起只取最优，绝不会把两个
+    其实互斥的券都算进到手价，也就不会报出一个用户拿不到的低价。
+    """
+
+    PRODUCT = "product"      # 商品层：页面直降/秒杀/认不出归属的券
+    SHOP = "shop"            # 店铺层：店铺券/店内满减
+    PLATFORM = "platform"    # 平台层：平台券/跨店满减
+    PAYMENT = "payment"      # 支付层：银行卡/白条/花呗立减
+    SUBSIDY = "subsidy"      # 补贴层：国补/以旧换新
+    SHIPPING = "shipping"    # 运费层：包邮
+
+    @property
+    def label(self) -> str:
+        return {
+            DiscountLayer.PRODUCT: "商品层",
+            DiscountLayer.SHOP: "店铺层",
+            DiscountLayer.PLATFORM: "平台层",
+            DiscountLayer.PAYMENT: "支付层",
+            DiscountLayer.SUBSIDY: "补贴层",
+            DiscountLayer.SHIPPING: "运费层",
+        }[self]
+
+    @property
+    def stacks_across_layers(self) -> bool:
+        """这一层的优惠能否和别层的叠加。
+
+        补贴层和运费层不参与"抵扣叠加"的语义：补贴是资格问题，包邮替代的是
+        运费而不是抵扣商品价，把它们算进叠加只会让数字更难解释。
+        """
+        return self in (
+            DiscountLayer.PRODUCT,
+            DiscountLayer.SHOP,
+            DiscountLayer.PLATFORM,
+            DiscountLayer.PAYMENT,
+        )
+
+
+class PriceCertainty(str, Enum):
+    """价格/优惠的确定性等级（见 app/browser/enums 的模块 docstring）。"""
+
+    PAGE_PUBLIC = "page_public"
+    ACCOUNT_COUPON = "account_coupon"
+    CONDITIONAL = "conditional"
+    PREPAYMENT = "prepayment"
+    UNVERIFIABLE = "unverifiable"
+
+    @property
+    def label(self) -> str:
+        return {
+            PriceCertainty.PAGE_PUBLIC: "页面公开价",
+            PriceCertainty.ACCOUNT_COUPON: "账号可见可用券",
+            PriceCertainty.CONDITIONAL: "满足条件的预计价",
+            PriceCertainty.PREPAYMENT: "结算页待支付金额",
+            PriceCertainty.UNVERIFIABLE: "无法核实",
+        }[self]
+
+
 class PolicyScope(str, Enum):
     """政策归属层级。"""
     PLATFORM_RULE = "platform_rule"          # 平台通用规则

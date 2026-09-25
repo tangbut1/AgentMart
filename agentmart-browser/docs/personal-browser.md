@@ -29,7 +29,7 @@ app/browser/
   profiles.py      浏览器 profile 目录（AGENTMART_HOME 下，淘宝/天猫共用一组）
   driver.py        Playwright 驱动：launch_persistent_context、登录探测、字段读取、风控识别
   recipes.py       五个平台的 URL 配方、选择器、登录判定规则
-  extract.py       页面文本 → Offer（商品/优惠/政策/证据）的解析
+  extract.py       页面文本 → Offer（商品/优惠/政策/证据）的解析，含优惠归属层级推断
   fixtures.py      本地受控测试页（ThreadingHTTPServer，仅供测试）
   llm.py           自带 Key 的模型客户端：连接测试、视觉能力探测、用量与费用估算
   agent.py         编排器：状态机、五平台并发、预算/步数上限、取消、等待用户接管
@@ -37,8 +37,15 @@ app/browser/
   store.py         任务快照落库（SQLite），重启后可回读
   serialize.py     Offer / 价格拆解 / 确定性的 JSON 序列化
   service.py       应用服务层（被 routers/browser.py 调用）
+app/domain/
+  pricing.py       到手价拆解：确定/潜在/待核验 + 公开轨/我的轨
+  stacking.py      优惠互斥：同层取最优，不同层可叠加
+  coupontree.py    优惠券树：按归属层级摊开，标出 counted / beaten_by
+  models.py        Offer / Discount（layer、certainty）/ CanonicalProduct / Review
+  matching.py      同款匹配与规格硬冲突
 app/routers/browser.py   /api/browser/* 接口
-frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
+frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|CouponTreePanel
+frontend/extension/core/  与 app/domain 逐字段对应的 TS 实现（扩展与网页共用）
 ```
 
 数据流：
@@ -50,7 +57,8 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
       → 每平台：登录探测 → 搜索页 → 收集链接 → 逐商品读字段
       → Offer（带来源 URL、读取时间、证据定位）
   → group_offers（同款匹配，规格冲突不合并）
-  → compute_price_breakdown（确定 / 潜在 / 待核验三档）
+  → compute_price_breakdown（确定 / 潜在 / 待核验三档 + 公开轨 / 我的轨）
+  → build_coupon_tree（按归属层级摊开，标出同层互斥与两轨归属）
   → recommend（综合首选 / 更省钱 / 更稳妥）
   → result_view → 前端购买卡片 + 横向对比 + 购买建议
 ```
@@ -74,7 +82,9 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
 - 满减券按门槛判定：门槛未达只进「潜在到手价」，门槛达到才进「确定到手价」；
 - 「去领取」状态的优惠券只作为条件性抵扣，不计入确定价；
 - 国补资格无法核实 → 单独列示，不进任何合计；
-- 平台被风控挡住时：记录 `restricted` 与原因，**不用演示数据补齐**，其它平台继续跑。
+- 平台被风控挡住时：记录 `restricted` 与原因，**不用演示数据补齐**，其它平台继续跑；
+- 同层优惠互斥只取最优项，被挤掉的仍列在优惠券树上；账号券只进「我的轨」，
+  跨平台比价走公开轨（见第 4 节「双轨净价与优惠券树」）。
 
 **没有验证的部分（说清楚，不冒充）**：没有用真实账号在五个真实平台上完整跑过一遍。
 这一版交付的是「可运行、可测试、可接管的任务框架 + 已用受控页面验证过的计算与状态机」。
@@ -95,6 +105,25 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
 
 代码里对应 `app/domain/pricing.py`：`definite_total` 只累计无条件成立的抵扣；
 `potential_total ≤ definite_total`；演示数据（`DataStatus.DEMO`）不进入任何真实结论。
+
+### 双轨净价与优惠券树
+
+同一个到手价要回答两个不同的问题：「谁来看都该是这个价」和「我这次真正要付多少」。
+混在一起答，跨平台比出来的是账号差异，不是商品差异。
+
+- `public_total`（公开轨）只累计 `PriceCertainty.PAGE_PUBLIC` 的抵扣，跨平台比价用它；
+- `account_total`（我的轨）= `definite_total`，再加上页面显示本账号已可用的券；
+- `account_gap = public_total − account_total`，即账号权益带来的那部分，永不为负。
+
+`app/domain/coupontree.py` 把一件商品上的优惠按归属层级（`DiscountLayer`：商品 / 店铺 /
+平台 / 支付 / 补贴 / 运费）摊成一棵树，每条记录带 `counted` 和 `beaten_by`：同层互斥时
+只有金额最高的那条 `counted`，被挤掉的仍然列出来并写明被谁挤掉。层级来源分两档，
+`stacking_confidence` 标 `evidenced`（数据源按平台规则显式声明 `stack_group`）或
+`inferred`（从优惠文案推断）；多个层级同时抵扣时界面必须提示"能否叠加是推断的"。
+
+层级不明时（既没有 `stack_group` 也没有 `layer`）不进互斥组、单独成立 ——
+这是唯一安全的默认，不会把两张券当成可叠加。浏览器版 `build_offer` 一定会填 `layer`，
+所以那条保守路径在扩展侧不可达（`test_browser_offer_always_sets_a_layer` 盯着这件事）。
 
 ---
 
@@ -196,14 +225,23 @@ frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|...
 ## 10. 测试怎么跑、覆盖了什么
 
 ```bash
-python -m pytest                       # 142 passed（含 2 个真实 Chromium 端到端用例）
+python -m pytest                       # 351 passed（含 5 个真实 Chromium 端到端用例）
 cd frontend && npm run build           # tsc --noEmit && vite build
+cd frontend && npm run test:extension  # 216 passed（领域逻辑与扩展）
+cd frontend && npm run build:extension # MV3 扩展打包
 ```
 
 重点用例：
 
 - 规格硬冲突不合并（容量/版本/成色/套装/品牌/尺码）；
 - 优惠门槛、互斥组、叠加、过期、运费、国补资格不确定；
+- **同层互斥**：两张同层店铺券只算金额最高的那张，被挤掉的仍列在树上并写明被谁挤掉
+  （端到端用例 `test_same_layer_coupons_and_dual_track_flow_through_real_chromium`
+  用真实 Chromium 断言到手价是 1179.00，不是把两张券都减掉的 1169.00）；
+- **双轨净价**：公开轨只算谁来看都成立的抵扣，账号券只进我的轨，
+  跨平台比价用 `best_public_price`；
+- Python 与 TypeScript 两侧价格逻辑用同一份语料逐字段比对
+  （`tests/test_extension_parity.py` ↔ `frontend/extension/tests/corpus/page-fields.json`）；
 - 视觉金额与 DOM 证据不一致时被拦截；无 DOM 证据的视觉价格会被降级；
 - 单平台失败不影响其它平台；验证码记 `restricted`；登录过期等你接管；
 - 取消任务、预算耗尽都能安全停下并保留已取得的证据；

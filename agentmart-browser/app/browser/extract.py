@@ -22,6 +22,7 @@ from ..domain.enums import (
     ConditionKind,
     DataStatus,
     DiscountKind,
+    DiscountLayer,
     Platform,
     PolicyCategory,
     PolicyScope,
@@ -75,6 +76,10 @@ _AVAILABLE_HINTS = ("可用", "立减")
 _ACTION_HINTS = ("去领取", "立即领取", "点击领取", "待领取", "需领取", "去使用", "立即抢", "抢券")
 # 表示"不确定/不可用"的措辞
 _UNAVAILABLE_HINTS = ("已抢光", "已过期", "不可用", "已失效", "暂不可用")
+# 表示"页面活动价，已经反映在当前标价里"的措辞 —— 这类优惠谁来看都成立，
+# 属于公开轨。必须排在"已领取/可用"之后判断："限时活动 8.5折 已领取"里
+# 同时含"限时活动"和"已领取"，它是你账号下的券，不是公开活动。
+_PAGE_ACTIVITY_HINTS = ("直降", "秒杀", "活动价", "限时活动", "满减活动", "已减", "促销价")
 # 补贴类关键词
 _SUBSIDY_HINTS = ("国补", "国家补贴", "政府补贴", "以旧换新", "换新补贴", "平台补贴", "百亿补贴")
 # 支付类关键词
@@ -83,6 +88,32 @@ _PAYMENT_HINTS = ("支付立减", "银行卡", "花呗", "白条", "微信支付
 _THRESHOLD_RE = re.compile(r"满\s*([0-9]+(?:\.[0-9]+)?)\s*(?:元)?\s*减\s*([0-9]+(?:\.[0-9]+)?)")
 _OFF_RE = re.compile(r"(?:减|优惠|立减|券)\s*([0-9]+(?:\.[0-9]{1,2})?)\s*元")
 _DISCOUNT_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*折")
+
+# ─── 优惠归属层级 ────────────────────────────────────────────────
+#
+# 层级决定互斥：同一层里的券只算一张。判据全部来自优惠自己的文案，
+# 文案没写的归 PRODUCT 层（最保守：和商品层优惠挤在一起只取最优）。
+#
+# 顺序很重要：先看 kind（包邮/补贴/支付是结构化的，不会被文案骗），
+# 再看文案里的层级词。文案层级词里平台优先于店铺，因为"跨店满减"
+# 同时含"店"字，先匹配店铺会把它错归到店铺层。
+_SHOP_LAYER_HINTS = ("店铺券", "店内券", "店铺满减", "店铺优惠", "本店", "店内")
+_PLATFORM_LAYER_HINTS = ("平台券", "跨店", "每满", "平台满减", "平台优惠", "购物券", "平台补贴")
+
+
+def discount_layer(text: str, kind: DiscountKind) -> DiscountLayer:
+    """从优惠文案推断归属层级。判不出来就归商品层，绝不猜一个更松的。"""
+    if kind == DiscountKind.FREE_SHIPPING:
+        return DiscountLayer.SHIPPING
+    if kind in (DiscountKind.SUBSIDY, DiscountKind.TRADE_IN):
+        return DiscountLayer.SUBSIDY
+    if kind == DiscountKind.PAYMENT:
+        return DiscountLayer.PAYMENT
+    if any(h in text for h in _PLATFORM_LAYER_HINTS):
+        return DiscountLayer.PLATFORM
+    if any(h in text for h in _SHOP_LAYER_HINTS):
+        return DiscountLayer.SHOP
+    return DiscountLayer.PRODUCT
 
 
 @dataclass
@@ -163,6 +194,16 @@ def interpret_coupon_text(text: str) -> Optional[CouponReading]:
             raw_text=raw, kind=kind, amount=amount, percent=percent,
             threshold=threshold, certainty=PriceCertainty.ACCOUNT_COUPON,
             reason="页面显示该优惠已可用于当前商品",
+        )
+
+    if any(h in lowered for h in _PAGE_ACTIVITY_HINTS):
+        # 已经反映在当前标价里的页面活动：谁来看都成立，进公开轨。
+        # 判据必须是页面自己写了"直降/秒杀/活动价"，没有就不能升档 ——
+        # 少算一点公开抵扣只会让公开价偏高，绝不会承诺一个拿不到的价。
+        return CouponReading(
+            raw_text=raw, kind=kind, amount=amount, percent=percent,
+            threshold=threshold, certainty=PriceCertainty.PAGE_PUBLIC,
+            reason="页面显示为当前标价已包含的活动优惠",
         )
 
     return CouponReading(
@@ -363,6 +404,8 @@ def build_offer(
                 eligibility=None,
                 source_url=fields.url,
                 data_status=DataStatus.REAL,
+                layer=discount_layer(reading.raw_text, reading.kind),
+                certainty=reading.certainty,
                 note=f"确定性：{certainty_label(condition)}；原文：{reading.raw_text}",
             )
         )

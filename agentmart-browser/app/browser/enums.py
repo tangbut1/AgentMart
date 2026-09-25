@@ -9,11 +9,15 @@
 4. ``PREPAYMENT``       结算页显示但尚未付款的待支付金额 → CONDITIONAL
                        （未经用户确认不得作为结论）
 
-任何一档无法核实 → ``UNVERIFIABLE``，只列示、不计入到手价。
+价格确定性原本定义在这里，现在搬到了 app/domain/enums.py —— 优惠券树要按
+确定性把净价拆成「公开轨」和「我的轨」，那是 domain 层的事，不能再反过来
+import 本模块。下面这行是给既有 import 路径留的兼容转发。
 """
 from __future__ import annotations
 
 from enum import Enum
+
+from ..domain.enums import PriceCertainty  # noqa: F401  （转发，见模块 docstring）
 
 
 class TaskStatus(str, Enum):

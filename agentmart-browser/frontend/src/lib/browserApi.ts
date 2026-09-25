@@ -163,6 +163,10 @@ export interface DiscountView {
   condition: string;
   condition_kind: "unconditional" | "conditional" | "unverifiable";
   condition_kind_label: string;
+  /** 归属层级：同层内的优惠互斥，只取最优 */
+  layer: "product" | "shop" | "platform" | "payment" | "subsidy" | "shipping" | null;
+  layer_label: string | null;
+  certainty: string | null;
   region_limit: string | null;
   eligibility: string | null;
   source_url: string | null;
@@ -183,6 +187,48 @@ export interface PriceLineView {
   data_status_label: string;
 }
 
+/** 优惠券树上的一个节点 = 一条优惠。 */
+export interface CouponTreeEntryView {
+  label: string;
+  kind: string;
+  amount: string;
+  condition: string;
+  condition_kind: string;
+  condition_kind_label: string;
+  certainty: string | null;
+  certainty_label: string | null;
+  source_url: string | null;
+  data_status: string;
+  /** 真正参与计算的，还是被同层互斥挤掉的 */
+  counted: boolean;
+  /** 被挤掉时，挤掉它的是哪一条 */
+  beaten_by: string | null;
+}
+
+/** 优惠券树的一层 = 一个归属层级。 */
+export interface CouponTreeLayerView {
+  layer: string;
+  layer_label: string;
+  entries: CouponTreeEntryView[];
+  /** 这一层在公开轨上抵掉了多少 */
+  public_amount: string;
+  /** 这一层在我的轨上抵掉了多少 */
+  account_amount: string;
+}
+
+/** 一件商品完整的优惠券树。 */
+export interface CouponTreeView {
+  layers: CouponTreeLayerView[];
+  public_total: string;
+  account_total: string;
+  potential_total: string;
+  unverifiable_total: string;
+  /** 我的轨比公开轨便宜了多少 —— 账号权益带来的那部分 */
+  account_gap: string;
+  stacking_confidence: "inferred" | "evidenced";
+  notes: string[];
+}
+
 export interface BreakdownView {
   list_price: string;
   shipping_fee: string;
@@ -191,6 +237,12 @@ export interface BreakdownView {
   unverifiable_total: string;
   definite_discount: string;
   potential_discount: string;
+  /** 公开轨：只算谁来看都成立的抵扣。跨平台比价用这一轨 */
+  public_total: string;
+  public_discount: string;
+  /** 我的轨：再加页面显示本账号已可用的券 */
+  account_total: string;
+  account_gap: string;
   lines: PriceLineView[];
   applied_groups: string[];
   notes: string[];
@@ -264,6 +316,7 @@ export interface OfferView {
   worst_trap_severity: "blocker" | "major" | "minor" | null;
   subsidy: SubsidyView | null;
   breakdown: BreakdownView;
+  coupon_tree: CouponTreeView;
   data_status: string;
   data_status_label: string;
   source: string;
@@ -285,6 +338,8 @@ export interface GroupView {
   confidence: number;
   warnings: string[];
   best_definite_price: string | null;
+  /** 公开轨上的最低到手价 —— 跨平台比价看这个，别拿账号券去比商品 */
+  best_public_price: string | null;
   offers: OfferView[];
 }
 

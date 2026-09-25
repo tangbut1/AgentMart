@@ -19,6 +19,7 @@ import type {
 import {
   CONDITION_KIND_LABELS,
   DATA_STATUS_LABELS,
+  DISCOUNT_LAYER_LABELS,
   PLATFORM_LABELS,
   POLICY_CATEGORY_LABELS,
   POLICY_SCOPE_LABELS,
@@ -29,8 +30,10 @@ import {
 } from "./enums.ts";
 import { formatMoney } from "./money.ts";
 import type { Discount, Offer, PriceBreakdown, PriceLine, Policy } from "./model.ts";
-import { offerId } from "./model.ts";
+import { accountGap, offerId, publicDiscount } from "./model.ts";
 import { definiteDiscount, potentialDiscount } from "./pricing.ts";
+import { couponTreeView } from "./couponTree.ts";
+import { buildCouponTree } from "./couponTree.ts";
 import { interpretSubsidyText, subsidyScenarios, subsidyFitLabel } from "./subsidy.ts";
 import { detectTraps, summarizeTraps, trapBasisLabel, trapSeverityLabel, worstSeverity } from "./traps.ts";
 
@@ -100,6 +103,10 @@ function breakdownView(breakdown: PriceBreakdown): BreakdownView {
     unverifiable_total: money(breakdown.unverifiable_total),
     definite_discount: money(definiteDiscount(breakdown)),
     potential_discount: money(potentialDiscount(breakdown)),
+    public_total: money(breakdown.public_total),
+    public_discount: money(publicDiscount(breakdown)),
+    account_total: money(breakdown.account_total),
+    account_gap: money(accountGap(breakdown)),
     lines: breakdown.lines.map(discountLine),
     applied_groups: [...breakdown.applied_groups],
     notes: [...breakdown.notes],
@@ -118,6 +125,9 @@ function discountView(discount: Discount): DiscountView {
     condition: discount.condition,
     condition_kind: discount.condition_kind,
     condition_kind_label: conditionLabel(discount.condition_kind),
+    layer: discount.layer,
+    layer_label: discount.layer ? DISCOUNT_LAYER_LABELS[discount.layer] : null,
+    certainty: discount.certainty,
     region_limit: discount.region_limit,
     eligibility: discount.eligibility,
     source_url: discount.source_url,
@@ -227,6 +237,7 @@ export function offerView(
     worst_trap_severity: worstSeverity(traps),
     subsidy,
     breakdown: breakdownView(breakdown),
+    coupon_tree: couponTreeView(buildCouponTree(offer, breakdown)),
     data_status: offer.data_status,
     data_status_label: DATA_STATUS_LABELS[offer.data_status],
     source: offer.source,

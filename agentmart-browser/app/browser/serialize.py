@@ -12,13 +12,16 @@ from ..domain.enums import (
     ConditionKind,
     DataStatus,
     DiscountKind,
+    DiscountLayer,
     PolicyCategory,
     PolicyScope,
+    PriceCertainty,
 )
 from ..domain.models import Discount, Offer, Policy, PriceBreakdown, PriceLine, Recommendation
+from ..domain.coupontree import build_coupon_tree
 from ..domain.subsidy import interpret_subsidy_text, subsidy_scenarios
 from ..domain.traps import detect_traps, summarize_traps, worst_severity
-from .enums import PriceCertainty
+from .enums import PriceCertainty as _BrowserPriceCertainty  # noqa: F401  （兼容转发）
 
 _CERTAINTY_ORDER = [
     PriceCertainty.PAGE_PUBLIC,
@@ -90,6 +93,10 @@ def breakdown_dict(breakdown: PriceBreakdown) -> Dict[str, Any]:
         "unverifiable_total": money(breakdown.unverifiable_total),
         "definite_discount": money(breakdown.definite_discount),
         "potential_discount": money(breakdown.potential_discount),
+        "public_total": money(breakdown.public_total),
+        "public_discount": money(breakdown.public_discount),
+        "account_total": money(breakdown.account_total),
+        "account_gap": money(breakdown.account_gap),
         "lines": [discount_line(line) for line in breakdown.lines],
         "applied_groups": list(breakdown.applied_groups),
         "notes": list(breakdown.notes),
@@ -105,6 +112,9 @@ def discount(discount: Discount) -> Dict[str, Any]:
         "condition": discount.condition,
         "condition_kind": discount.condition_kind.value,
         "condition_kind_label": _condition_label(discount.condition_kind),
+        "layer": discount.layer.value if discount.layer else None,
+        "layer_label": discount.layer.label if discount.layer else None,
+        "certainty": discount.certainty.value if discount.certainty else None,
         "region_limit": discount.region_limit,
         "eligibility": discount.eligibility,
         "source_url": discount.source_url,
@@ -207,6 +217,7 @@ def offer(
         ),
         "subsidy": subsidy,
         "breakdown": breakdown_dict(breakdown),
+        "coupon_tree": build_coupon_tree(offer, breakdown).to_dict(),
         "data_status": offer.data_status.value,
         "data_status_label": offer.data_status.label,
         "source": offer.source,

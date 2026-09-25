@@ -5,14 +5,17 @@
  */
 
 import type { Cents, Rational } from "./money.ts";
-import type {
-  ConditionKind,
-  DataStatus,
-  DiscountKind,
-  Platform,
-  PolicyCategory,
-  PolicyScope,
-  ShopType,
+import {
+  DISCOUNT_LAYER_LABELS,
+  type ConditionKind,
+  type DataStatus,
+  type DiscountKind,
+  type DiscountLayer,
+  type Platform,
+  type PolicyCategory,
+  type PolicyScope,
+  type PriceCertainty,
+  type ShopType,
 } from "./enums.ts";
 
 export interface Discount {
@@ -24,13 +27,32 @@ export interface Discount {
   percent: Rational | null;
   condition: string;
   condition_kind: ConditionKind;
+  /** 数据源显声明的互斥组名（API 版用） */
   stack_group: string | null;
+  /** 归属层级。数据源没填时互斥判定退回 stack_group，两者都空则单独成池 */
+  layer: DiscountLayer | null;
+  /** 页面文案对应的确定性档位。双轨净价靠它区分公开轨和我的轨 */
+  certainty: PriceCertainty | null;
   max_amount: Cents | null;
   region_limit: string | null;
   eligibility: string | null;
   source_url: string | null;
   data_status: DataStatus;
   note: string | null;
+}
+
+/** 互斥判定用的池键。显式声明的 stack_group 优先于推断出的层级。 */
+export function discountLayerKey(discount: Discount): string {
+  if (discount.stack_group) return discount.stack_group;
+  if (discount.layer) return discount.layer;
+  return "";
+}
+
+/** 池的中文名，用于向用户解释「为什么这张券没算进去」。 */
+export function discountLayerLabel(discount: Discount): string {
+  if (discount.stack_group) return discount.stack_group;
+  if (discount.layer) return DISCOUNT_LAYER_LABELS[discount.layer];
+  return "未分层";
 }
 
 export interface PriceLine {
@@ -43,6 +65,7 @@ export interface PriceLine {
   data_status: DataStatus;
 }
 
+/** 可解释的到手价拆解。双轨净价见字段注释。 */
 export interface PriceBreakdown {
   list_price: Cents;
   shipping_fee: Cents;
@@ -52,6 +75,23 @@ export interface PriceBreakdown {
   unverifiable_total: Cents;
   applied_groups: string[];
   notes: string[];
+  /** 公开轨：只算「谁来看都成立」的抵扣。跨平台比价用这一轨 */
+  public_total: Cents;
+  /** 我的轨：再加「页面显示本账号已可用」的券。等于 definite_total */
+  account_total: Cents;
+}
+
+/** 公开轨被抵扣掉的部分（分）。 */
+export function publicDiscount(breakdown: PriceBreakdown): Cents {
+  return breakdown.list_price + breakdown.shipping_fee - breakdown.public_total;
+}
+
+/** 我的轨比公开轨便宜了多少 —— 账号权益带来的那部分（分）。
+ *
+ *  必须 ≥ 0：账号权益只会更便宜。真算出负数说明把不该进公开轨的抵扣
+ *  算进去了，调用方应当当错误处理而不是展示出来。 */
+export function accountGap(breakdown: PriceBreakdown): Cents {
+  return breakdown.public_total - breakdown.account_total;
 }
 
 export interface Policy {

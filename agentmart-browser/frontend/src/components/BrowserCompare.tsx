@@ -19,8 +19,8 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
             <h3 className="section-title" style={{ fontSize: 16 }}>
               {group.title}
               <span className="section-note">
-                {group.offers.length} 个平台报价 · 最低确定价{" "}
-                {group.best_definite_price ?? "—"} 元
+                {group.offers.length} 个平台报价 · 公开轨最低{" "}
+                {group.best_public_price ?? "—"} 元
               </span>
             </h3>
           </div>
@@ -41,7 +41,8 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                   <tr>
                     <th>平台 / 店铺</th>
                     <th>标价</th>
-                    <th>确定到手</th>
+                    <th>公开轨到手</th>
+                    <th>我的轨到手</th>
                     <th>含待确认优惠</th>
                     <th>价格确定性</th>
                     <th>售后 / 坑</th>
@@ -60,7 +61,16 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                       <td className="num" data-label="标价">
                         {offer.breakdown.list_price || "—"}
                       </td>
-                      <td className="num text-price" data-label="确定到手">
+                      <td className="num" data-label="公开轨到手">
+                        {/* 旧版本存的结果没有这一轨，不能拿 0 顶一个「谁看都成立」的价 */}
+                        {offer.breakdown.public_total ?? "—"}
+                        {Number(offer.breakdown.account_gap) > 0 && (
+                          <div className="table-cell-sub">
+                            含账号券 {offer.breakdown.account_gap} 元
+                          </div>
+                        )}
+                      </td>
+                      <td className="num text-price" data-label="我的轨到手">
                         {offer.breakdown.definite_total}
                       </td>
                       <td className="num" data-label="含待确认优惠">
@@ -118,7 +128,9 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
 
             <div className="small muted">
               同一行里的价格只对应同一平台同一商品；跨平台的优惠不会互相叠加，也不会把 A
-              平台的券算到 B 平台的商品上。
+              平台的券算到 B 平台的商品上。比平台请看"公开轨到手"——那一轨只算谁来看都成立的
+              抵扣；"我的轨到手"里含你账号下已显示可用的券，未登录时拿不到，两个平台账号不同
+              也会让它变低。
             </div>
           </div>
         </section>

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.browser.driver import PlaywrightConfig, PlaywrightDriver
 from app.browser.enums import DataOrigin
-from app.browser.fixtures import FixtureServer, FixtureSpec
+from app.browser.fixtures import FixtureProduct, FixtureServer, FixtureSpec
 from app.browser.service import service
 from app.domain.enums import Platform
 from app.main import app
@@ -330,4 +330,112 @@ def test_traps_and_subsidy_flow_through_real_chromium(client):
         # 补贴永远不进确定到手价
         definite = float(clean["breakdown"]["definite_total"])
         assert definite == float(clean["list_price"])
+
+
+def test_same_layer_coupons_and_dual_track_flow_through_real_chromium(client):
+    """真实浏览器里跑一遍优惠券树和双轨净价。
+
+    夹具商品页故意放两张同层店铺券（满1000减50 和 满1000减80，都已领取），
+    再加一条跨店满减。要验证的是那条不能破的线：
+
+    1. **不会把两张券都减掉**。都减会得到 1169.00，那是结算页拿不到的价；
+    2. 被挤掉的那张仍然出现在树上，还写明是被谁挤掉的；
+    3. 三条券都写了"已领取"，所以只进我的轨，公开轨仍是标价 ——
+       跨平台比价时不该把账号权益算成商品便宜；
+    4. 两个层级同时抵扣时，"能否叠加是推断的"这句话必须出现在用户看得见的地方；
+    5. 层级、确定性这些标签由后端给中文，前端不自己翻译。
+    """
+    spec = FixtureSpec(
+        products=(
+            FixtureProduct(
+                id="2001001",
+                title="测试同层互斥 冲锋衣 TAWJ91718 黑色 L",
+                price="1299.00",
+                color="黑色",
+                size="L",
+                shop="示例官方旗舰店",
+                sales="已售 100 件",
+                coupons=(
+                    "店铺券 满1000减50（已领取，可用）",
+                    "店铺券 满1000减80（已领取，可用）",
+                    "跨店每满300减40（已领取，可用）",
+                ),
+            ),
+        ),
+    )
+    with FixtureServer(spec) as server:
+        base = server.base_url
+        service.agent.set_driver_factory(_playwright_factory(base))
+
+        created = client.post(
+            "/api/browser/tasks",
+            json={
+                "text": "预算 1300 元买一件防雨透气的冲锋衣",
+                "platforms": ["jd"],
+                "options": {
+                    "max_candidates": 1,
+                    "ask_review_question": False,
+                    "origin": "test_fixture",
+                    "headless": True,
+                    "url_overrides": {
+                        "jd.home": f"{base}/jd/home.html",
+                        "jd.search": f"{base}/jd/search.html",
+                    },
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        client.post(f"/api/browser/tasks/{task_id}/start")
+        final = _wait_terminal(client, task_id, timeout=120)
+        assert final["summary_status"] == "completed", final["notes"]
+
+        result = client.get(f"/api/browser/tasks/{task_id}/result").json()
+        groups = result["groups"]
+        assert groups, "夹具应返回商品组"
+        group = groups[0]
+        offer = group["offers"][0]
+        breakdown = offer["breakdown"]
+        tree = offer["coupon_tree"]
+
+        # 1) 两张同层券只算一张，跨店券另算一层：1299 - 80 - 40 = 1179，
+        #    不是把两张店铺券都减掉的 1169
+        assert float(offer["list_price"]) == 1299.00
+        assert float(breakdown["definite_total"]) == 1179.00
+        assert float(breakdown["account_total"]) == 1179.00
+        # 3) 三条都是账号券：公开轨一分不减
+        assert float(breakdown["public_total"]) == 1299.00
+        assert float(breakdown["account_gap"]) == 120.00
+        # 跨平台比价要看公开轨，它和我的轨必须分开给
+        assert float(group["best_public_price"]) == 1299.00
+        assert float(group["best_definite_price"]) == 1179.00
+
+        # 2) 树上两张券都在，挤掉的那张写明是被谁挤掉的
+        shop = next(layer for layer in tree["layers"] if layer["layer"] == "shop")
+        assert shop["layer_label"] == "店铺层"
+        assert len(shop["entries"]) == 2
+        counted = [entry for entry in shop["entries"] if entry["counted"]]
+        beaten = [entry for entry in shop["entries"] if not entry["counted"]]
+        assert len(counted) == 1 and len(beaten) == 1
+        assert counted[0]["amount"] == "80.00"
+        assert beaten[0]["amount"] == "50.00"
+        assert "80" in (beaten[0]["beaten_by"] or "")
+        assert float(shop["account_amount"]) == 80.00
+        assert float(shop["public_amount"]) == 0.00
+
+        # 跨店券是另一层，和店铺券不互斥
+        platform = next(layer for layer in tree["layers"] if layer["layer"] == "platform")
+        assert platform["layer_label"] == "平台层"
+        assert len(platform["entries"]) == 1
+        assert platform["entries"][0]["counted"] is True
+        assert float(platform["account_amount"]) == 40.00
+
+        # 4) 中文标签来自后端
+        assert counted[0]["certainty"] == "account_coupon"
+        assert counted[0]["certainty_label"] == "账号可见可用券"
+        assert counted[0]["condition_kind_label"] == "无条件成立"
+        # 5) 层级是推断出来的，且多层同时抵扣 —— 两句话都必须让用户看见
+        assert tree["stacking_confidence"] == "inferred"
+        assert any("叠加" in note for note in tree["notes"])
+        assert any("未登录时拿不到" in note for note in tree["notes"])
 

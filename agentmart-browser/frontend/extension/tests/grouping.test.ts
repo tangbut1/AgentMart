@@ -189,6 +189,40 @@ describe("buildCompareGroups", () => {
     assert.equal(result.groups[0].best_definite_price, "2799.00");
   });
 
+  it("公开轨最低价不看账号券：比的是商品，不是账号", () => {
+    // 主角标价高，但页面显示我这张券已经能用；天猫标价低，没有券。
+    // 用我的轨比会判京东便宜（2749 < 2799），那是账号权益带来的差异，
+    // 换个账号就反过来。公开轨才能跨平台比。
+    const couponPrimary = viewOf({
+      url: "https://item.jd.com/100012043978.html",
+      title: "Sony WH-1000XM5 头戴式无线降噪耳机",
+      priceText: "2899.00",
+      couponTexts: ["店铺券 满2000减150 已领取"],
+      shopName: "索尼官方旗舰店",
+      policyTexts: ["7天无理由退货"],
+      evidence: { price: "x" },
+    });
+    const result = buildCompareGroups(couponPrimary, [sameOnTmall]);
+    assert.equal(result.groups[0].best_definite_price, "2749.00");
+    assert.equal(result.groups[0].best_public_price, "2799.00");
+  });
+
+  it("公开轨最低价同样剔掉没读到价格的条目", () => {
+    const noPrice = viewOf(
+      {
+        url: "https://detail.tmall.com/item.htm?id=678901234568",
+        title: "Sony WH-1000XM5 头戴式降噪耳机 无线蓝牙",
+        priceText: "",
+        shopName: "索尼官方旗舰店",
+        policyTexts: [],
+        evidence: {},
+      },
+      "tmall",
+    );
+    const result = buildCompareGroups(primary, [sameOnTmall, noPrice]);
+    assert.equal(result.groups[0].best_public_price, "2799.00");
+  });
+
   it("只有主角时置信度为 1，不给虚假的高置信", () => {
     const result = buildCompareGroups(primary, [different]);
     assert.equal(result.groups[0].offers.length, 1);

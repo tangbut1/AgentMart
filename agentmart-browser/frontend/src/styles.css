@@ -1098,6 +1098,153 @@ button.chip[aria-pressed="true"] {
   font-weight: 700;
 }
 
+/* ─── 优惠券树 + 双轨净价 ───────────────────────────────── */
+
+.coupon-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* 两个轨并排：公开轨是可以拿去跨平台比的那个，我的轨才是我要付的钱 */
+.coupon-tree__tracks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}
+
+.track {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+}
+
+.track__label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.coupon-tree__inferred {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--warn-tint);
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+}
+
+.coupon-tree__layers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-layer {
+  border-left: 2px solid var(--primary-tint-strong);
+  padding-left: 10px;
+}
+
+.tree-layer__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tree-layer__entries {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tree-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+/* 被同层更优项挤掉的券：仍然要看得见，只是不再参与计算 */
+.tree-entry--dropped {
+  background: transparent;
+  border-style: dashed;
+}
+
+.tree-entry__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.tree-entry__label {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.tree-entry__meta {
+  align-items: baseline;
+}
+
+.track-note--ok {
+  color: var(--ok);
+}
+
+.track-note--warn {
+  color: var(--warn);
+}
+
+.track-note--muted {
+  color: var(--ink-3);
+}
+
+.coupon-tree__notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.coupon-tree__notes li {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  padding-left: 14px;
+  position: relative;
+}
+
+.coupon-tree__notes li::before {
+  content: "·";
+  position: absolute;
+  left: 4px;
+  color: var(--ink-4);
+  font-weight: 700;
+}
+
+.coupon-tree-details > summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.coupon-tree-details > summary:hover {
+  color: var(--ink-2);
+}
+
 /* ─── 商品组卡片 ───────────────────────────────────────── */
 
 .group-card {

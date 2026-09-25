@@ -16,9 +16,11 @@ from .enums import (
     CurationStatus,
     DataStatus,
     DiscountKind,
+    DiscountLayer,
     Platform,
     PolicyCategory,
     PolicyScope,
+    PriceCertainty,
     ReviewPlatform,
     ShopType,
 )
@@ -45,6 +47,12 @@ class Discount:
     condition_kind: ConditionKind = ConditionKind.UNCONDITIONAL
     # 同一 stack_group 内的优惠互斥，只取金额最高的一项（由数据源声明的规则决定）
     stack_group: Optional[str] = None
+    # 归属层级。数据源没填时互斥判定退回 stack_group，两者都空则视为可叠加
+    # （扩展侧 build_offer 一定会填，见 app/browser/extract.py）
+    layer: Optional[DiscountLayer] = None
+    # 页面文案对应的确定性档位。双轨净价靠它区分「公开轨」和「我的轨」，
+    # 不再从 note 字符串里反解
+    certainty: Optional[PriceCertainty] = None
     # 百分比折扣（与 amount 二选一）；percent 为 0-100 的数值
     percent: Optional[Decimal] = None
     max_amount: Optional[Decimal] = None
@@ -58,6 +66,23 @@ class Discount:
     verified_at: Optional[datetime] = None
     data_status: DataStatus = DataStatus.REAL
     note: Optional[str] = None
+
+    @property
+    def layer_key(self) -> str:
+        """互斥判定用的池键。显式声明的 stack_group 优先于推断出的层级。"""
+        if self.stack_group:
+            return self.stack_group
+        if self.layer is not None:
+            return self.layer.value
+        return ""
+
+    @property
+    def layer_label(self) -> str:
+        if self.stack_group:
+            return self.stack_group
+        if self.layer is not None:
+            return self.layer.label
+        return "未分层"
 
     def resolved_amount(self, base: Decimal) -> Decimal:
         """按基础价计算实际抵扣额（处理百分比与封顶）。"""
@@ -86,9 +111,20 @@ class PriceLine:
 class PriceBreakdown:
     """可解释的到手价拆解。
 
-    - definite_total: 只计入「无条件成立」的抵扣 —— 用户现在就能拿到的价格
-    - potential_total: 再计入「满足条件才成立」的抵扣 —— 需要用户自行确认资格
-    - unverifiable_total: 无法核实的抵扣，仅供参考，绝不计入上面两个数
+    双轨净价（同一件商品、两个都站得住的数）：
+
+    - ``public_total``   公开轨：只算「谁来看都成立」的抵扣。不登录、没有
+                         任何账号权益也能拿到这个价。跨平台比价用这一轨，
+                         否则拿别家的公开价比自己账号里的券，比出来的是
+                         两个不同的东西。
+    - ``account_total``  我的轨：再加上「页面显示本账号已可用」的抵扣。
+                         只有在用户自己的浏览器里读页面才拿得到这个数。
+    - ``potential_total`` 再计入「满足条件才成立」的抵扣 —— 需要用户自行
+                         确认资格。
+    - ``unverifiable_total`` 无法核实的抵扣，仅供参考，绝不计入上面任何一个。
+
+    ``definite_total`` 保留为 ``account_total`` 的别名：老界面和老测试读的
+    都是它，语义也没变（"用户现在就能拿到的价格"）。
     """
 
     list_price: Decimal
@@ -99,6 +135,8 @@ class PriceBreakdown:
     unverifiable_total: Decimal = ZERO
     applied_groups: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    public_total: Decimal = ZERO
+    account_total: Decimal = ZERO
 
     @property
     def definite_discount(self) -> Decimal:
@@ -107,6 +145,19 @@ class PriceBreakdown:
     @property
     def potential_discount(self) -> Decimal:
         return (self.list_price + self.shipping_fee - self.potential_total).quantize(Decimal("0.01"))
+
+    @property
+    def public_discount(self) -> Decimal:
+        return (self.list_price + self.shipping_fee - self.public_total).quantize(Decimal("0.01"))
+
+    @property
+    def account_gap(self) -> Decimal:
+        """我的轨比公开轨便宜了多少 —— 也就是账号权益带来的那部分。
+
+        这个数必须 ≥ 0：账号权益只会更便宜，不会更贵。真算出负数说明哪里
+        把不该进公开轨的抵扣算进去了，调用方应当把它当错误而不是展示出来。
+        """
+        return (self.public_total - self.account_total).quantize(Decimal("0.01"))
 
 
 # ─── Offer (a concrete listing on one platform) ───────────────
@@ -184,6 +235,21 @@ class CanonicalProduct:
         # 那是凭空造出来的数，必须先剔掉。与前端 grouping.ts 的 hasPrice 同规则。
         totals = [
             compute_price_breakdown(o).definite_total
+            for o in self.offers
+            if o.data_status != DataStatus.DEMO and o.list_price > 0
+        ]
+        return min(totals) if totals else None
+
+    @property
+    def best_public_price(self) -> Optional[Decimal]:
+        """公开轨上的最低到手价。
+
+        跨平台比价应该看这一轨：definite_total 里含"我账号里的券"，
+        两个平台同样的商品，因为账号不同就能比出高下，那不是商品差异。
+        过滤条件和 best_definite_price 完全一致（见那边的注释）。
+        """
+        totals = [
+            compute_price_breakdown(o).public_total
             for o in self.offers
             if o.data_status != DataStatus.DEMO and o.list_price > 0
         ]

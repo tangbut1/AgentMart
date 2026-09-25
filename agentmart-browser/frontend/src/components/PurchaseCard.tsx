@@ -1,5 +1,6 @@
 import { type OfferView } from "../lib/browserApi";
 import { formatDateTime } from "../lib/format";
+import CouponTreePanel from "./CouponTreePanel";
 import { Badge, Icon, Notice, PriceFigure } from "./ui";
 
 const CONDITION_TONE: Record<string, "ok" | "warn" | "danger"> = {
@@ -18,9 +19,13 @@ const TRAP_SEVERITY_TONE: Record<string, "danger" | "warn" | "muted"> = {
 };
 
 export default function PurchaseCard({ offer }: { offer: OfferView }) {
-  const { breakdown, certainty } = offer;
+  const { breakdown, certainty, coupon_tree: tree } = offer;
   const definite = Number(breakdown.definite_total || 0);
   const potential = Number(breakdown.potential_total || 0);
+  // 库里可能存着旧版本生成的结果，那会儿还没有双轨和优惠券树。缺字段时
+  // 不能拿 0 顶上 —— 「公开轨 0.00 元」是编出来的数，只能说明没有这一段。
+  const publicTotal = breakdown.public_total == null ? null : Number(breakdown.public_total);
+  const accountGap = breakdown.account_gap == null ? null : Number(breakdown.account_gap);
   const traps = offer.traps ?? [];
   const stated = traps.filter((t) => t.basis === "page_text");
   const notShown = traps.filter((t) => t.basis !== "page_text");
@@ -45,8 +50,19 @@ export default function PurchaseCard({ offer }: { offer: OfferView }) {
           {offer.sku_text && <div className="small muted">规格：{offer.sku_text}</div>}
         </div>
         <div className="purchase-card__price">
-          <div className="small muted">确定可算部分</div>
+          <div className="small muted">我的轨到手</div>
           <PriceFigure value={definite} size="lg" />
+          {publicTotal !== null && publicTotal !== definite && (
+            <div className="small muted">
+              公开轨 <span className="text-price">{publicTotal.toFixed(2)}</span> 元
+              （谁来看都成立，跨平台比这一轨）
+            </div>
+          )}
+          {accountGap !== null && accountGap > 0 && (
+            <div className="small muted">
+              其中 {accountGap.toFixed(2)} 元来自你账号下已显示可用的券
+            </div>
+          )}
           {potential !== definite && (
             <div className="small muted">
               含待确认优惠约 <span className="text-price">{potential.toFixed(2)}</span> 元
@@ -113,21 +129,18 @@ export default function PurchaseCard({ offer }: { offer: OfferView }) {
         </div>
       )}
 
-      {offer.discounts.length > 0 && (
-        <div className="stack gap-6">
-          <div className="small muted">页面上识别到的优惠（逐条列出，未经验证不计入到手价）</div>
-          <ul className="small">
-            {offer.discounts.map((discount, index) => (
-              <li key={`${discount.label}-${index}`}>
-                <Badge tone={CONDITION_TONE[discount.condition_kind] ?? "muted"}>
-                  {discount.condition_kind_label}
-                </Badge>{" "}
-                {discount.label}
-                {discount.amount ? `（${discount.amount} 元）` : ""}
-                {discount.condition ? ` — ${discount.condition}` : ""}
-              </li>
-            ))}
-          </ul>
+      {tree ? (
+        <details className="coupon-tree-details">
+          <summary className="small muted">
+            优惠券树：这个到手价是怎么来的（{offer.discounts.length} 条优惠）
+          </summary>
+          <div className="mt-8">
+            <CouponTreePanel tree={tree} />
+          </div>
+        </details>
+      ) : (
+        <div className="small muted">
+          这条记录是旧版本生成的，没有优惠券树；上面的到手价仍是按当时页面上的证据算的。
         </div>
       )}
 

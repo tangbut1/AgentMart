@@ -46,6 +46,30 @@ export type DiscountKind = (typeof DISCOUNT_KINDS)[number];
 export const CONDITION_KINDS = ["unconditional", "conditional", "unverifiable"] as const;
 export type ConditionKind = (typeof CONDITION_KINDS)[number];
 
+/** 优惠归属层级（app/domain/enums.py 的 DiscountLayer）。
+ *
+ *  同一层里的优惠几乎一定不能叠加（一个商品页不会同时让你用两张店铺券），
+ *  不同层通常可以。文案没写的归 product —— 最保守：认不出归属的券和商品层
+ *  优惠挤在一个池里只取最优，绝不会把两张其实互斥的券都算进到手价。 */
+export const DISCOUNT_LAYERS = [
+  "product",
+  "shop",
+  "platform",
+  "payment",
+  "subsidy",
+  "shipping",
+] as const;
+export type DiscountLayer = (typeof DISCOUNT_LAYERS)[number];
+
+export const DISCOUNT_LAYER_LABELS = {
+  product: "商品层",
+  shop: "店铺层",
+  platform: "平台层",
+  payment: "支付层",
+  subsidy: "补贴层",
+  shipping: "运费层",
+} as const;
+
 export const CONDITION_KIND_LABELS = {
   unconditional: "无条件成立",
   conditional: "满足条件才成立",

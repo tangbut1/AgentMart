@@ -21,6 +21,8 @@ function discount(overrides: Partial<Discount> = {}): Discount {
     condition: "",
     condition_kind: "unconditional",
     stack_group: null,
+    layer: null,
+    certainty: null,
     max_amount: null,
     region_limit: null,
     eligibility: null,

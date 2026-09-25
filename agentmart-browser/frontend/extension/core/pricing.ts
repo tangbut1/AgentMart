@@ -1,16 +1,27 @@
 /** 优惠叠加与到手价拆解。
  *
- *  与后端 app/domain/pricing.py + app/domain/stacking.py 对应。四条原则照抄：
+ *  与后端 app/domain/pricing.py + app/domain/stacking.py 对应。原则照抄：
  *
  *  1. 只有「无条件成立」的抵扣才计入确定到手价（definite_total）；
  *  2. 「满足条件才成立」的计入潜在到手价（potential_total）；
  *  3. 「无法核实」的单独列示，绝不计入任何到手价；
- *  4. 同一 stack_group 内互斥，取金额最高项（金额相同取条件更宽松的）。
+ *  4. 同一互斥池内只取金额最高项（池 = stack_group ?? layer）；
+ *  5. 双轨净价：public_total 只算谁来看都成立的抵扣，account_total 再加
+ *     页面显示本账号可用的券。跨平台比价必须用 public_total —— 否则一边
+ *     算公开价一边算自己账号里的券，比出来的是账号差异不是商品差异。
  */
 
 import { divRoundHalfEven, formatMoney, type Cents } from "./money.ts";
 import type { DataStatus } from "./enums.ts";
 import type { Discount, PriceBreakdown, PriceLine } from "./model.ts";
+import { discountLayerKey, discountLayerLabel } from "./model.ts";
+
+/** 未分层的优惠单独成池 —— 这是唯一安全的默认：层级不明就不能假设可叠加。 */
+const UNGROUPED_KEY = "__ungrouped__";
+
+function poolKey(discount: Discount): string {
+  return discountLayerKey(discount) || UNGROUPED_KEY;
+}
 
 /** 按基础价计算实际抵扣额（处理百分比与封顶）。 */
 export function resolvedAmount(discount: Discount, base: Cents): Cents {
@@ -49,10 +60,11 @@ export function resolveStackable(discounts: readonly Discount[], base: Cents): S
       ungrouped.push(discount);
       continue;
     }
-    if (discount.stack_group) {
-      const bucket = groups.get(discount.stack_group);
+    const key = poolKey(discount);
+    if (key !== UNGROUPED_KEY) {
+      const bucket = groups.get(key);
       if (bucket) bucket.push(discount);
-      else groups.set(discount.stack_group, [discount]);
+      else groups.set(key, [discount]);
     } else {
       ungrouped.push(discount);
     }
@@ -61,7 +73,7 @@ export function resolveStackable(discounts: readonly Discount[], base: Cents): S
   const applied: Discount[] = [...ungrouped];
   const excluded: Array<[string, Discount[]]> = [];
 
-  for (const [group, members] of groups) {
+  for (const [, members] of groups) {
     if (members.length === 1) {
       applied.push(members[0]);
       continue;
@@ -72,9 +84,18 @@ export function resolveStackable(discounts: readonly Discount[], base: Cents): S
     }
     applied.push(best);
     const dropped = members.filter((member) => member !== best);
-    if (dropped.length > 0) excluded.push([group, dropped]);
+    if (dropped.length > 0) excluded.push([discountLayerLabel(members[0]), dropped]);
   }
   return { applied, excluded };
+}
+
+/** 这项抵扣是不是「谁来看都成立」。
+ *
+ *  只看确定性档位，不看 condition_kind：account_coupon 也是 unconditional，
+ *  但它成立的前提是「你这个账号有这张券」，那不是公开的。certainty 没填时
+ *  （API 版数据）按公开处理 —— 那边没有账号上下文，页面价就是公开价。 */
+export function isPagePublic(discount: Discount): boolean {
+  return discount.certainty === null || discount.certainty === "page_public";
 }
 
 function isFreeShipping(discount: Discount): boolean {
@@ -97,20 +118,23 @@ export function computePriceBreakdown(input: {
     unverifiable_total: 0,
     applied_groups: [],
     notes: [],
+    public_total: 0,
+    account_total: 0,
   };
 
   const { applied, excluded } = resolveStackable(input.discounts, base);
   breakdown.applied_groups = [
-    ...new Set(applied.map((d) => d.stack_group).filter((g): g is string => !!g)),
+    ...new Set(applied.map(discountLayerKey).filter((key): key is string => !!key)),
   ].sort();
   for (const [group, dropped] of excluded) {
     breakdown.notes.push(
-      `「${group}」组内优惠互斥，已取最优项，未计入：${dropped.map((d) => d.label).join("、")}`,
+      `「${group}」内优惠互斥，已取最优项，未计入：${dropped.map((d) => d.label).join("、")}`,
     );
   }
 
   let definite = base + input.shipping_fee;
   let potential = definite;
+  let publicTotal = definite;
   let unverifiable = 0;
 
   for (const discount of applied) {
@@ -132,6 +156,7 @@ export function computePriceBreakdown(input: {
     if (discount.condition_kind === "unconditional" && discount.kind !== "trade_in") {
       definite -= amount;
       potential -= amount;
+      if (isPagePublic(discount)) publicTotal -= amount;
     } else if (discount.kind === "trade_in" || discount.condition_kind === "conditional") {
       // 以旧换新是抵扣权益而非确定降价，永远只作为条件性抵扣
       potential -= amount;
@@ -143,12 +168,38 @@ export function computePriceBreakdown(input: {
   breakdown.definite_total = definite;
   breakdown.potential_total = potential;
   breakdown.unverifiable_total = unverifiable;
+  breakdown.public_total = publicTotal;
+  breakdown.account_total = definite;
 
   if (input.shipping_fee > 0 && !applied.some(isFreeShipping)) {
     breakdown.notes.push(`含运费 ¥${formatMoney(input.shipping_fee)}，未找到包邮优惠信息`);
   }
   if (unverifiable > 0) {
     breakdown.notes.push("存在无法核实的优惠，未计入到手价；请以商品页面实时显示为准");
+  }
+  // 多个层级同时贡献了确定抵扣时，叠加关系是按层级推断的，页面没有逐一
+  // 说明。这句话必须出现在用户看得到的地方。
+  const contributingLayers = new Set(
+    applied
+      .filter(
+        (d) =>
+          discountLayerKey(d) &&
+          d.condition_kind === "unconditional" &&
+          d.kind !== "trade_in" &&
+          d.data_status !== "demo",
+      )
+      .map(discountLayerKey),
+  );
+  if (contributingLayers.size > 1) {
+    breakdown.notes.push(
+      "多层优惠同时成立，能否叠加是按各优惠所属层级推断的，页面未逐一说明；最终可叠加项以平台结算页为准",
+    );
+  }
+  const gap = breakdown.public_total - breakdown.account_total;
+  if (gap > 0) {
+    breakdown.notes.push(
+      `其中 ¥${formatMoney(gap)} 来自您账号下已显示可用的优惠，未登录时拿不到`,
+    );
   }
   return breakdown;
 }
