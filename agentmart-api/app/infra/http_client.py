@@ -17,6 +17,7 @@ Rules enforced here (security requirement):
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
 from dataclasses import dataclass
 from typing import Optional
@@ -51,6 +52,22 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("2001:db8::/32"),      # documentation
 ]
 
+# Clash / Mihomo / Surge 的 TUN/Fake-IP 模式会把域名解析到 198.18.0.0/15，
+# 再由代理把流量送到真正的公网。RFC 2544 把这段划给基准测试，Python 的
+# ipaddress 因此判 is_private=True，于是开着代理的开发者一调外部接口就被
+# 这里全量拒绝，报"禁止访问内网/保留地址"——那是误杀，不是真的在防内网。
+#
+# 但这段地址在没有 TUN 代理的机器上确实不可路由，放开着也是白连；只有在
+# 运维明确知道本机走 Fake-IP 时才该放开。所以做成显式开关，默认仍旧拦死，
+# 并且只放开这唯一一段，不动其它私有网段。
+_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _allow_fake_ip() -> bool:
+    return str(
+        os.environ.get("AGENTMART_ALLOW_FAKE_IP", "")
+    ).strip().lower() in ("1", "true", "yes", "on")
+
 
 def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
     if (
@@ -61,6 +78,9 @@ def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
         or ip.is_multicast
         or ip.is_unspecified
     ):
+        # 唯一例外：本机确实跑在 Fake-IP 代理后面，且已显式打开开关
+        if _allow_fake_ip() and ip.version == 4 and ip in _FAKE_IP_NETWORK:
+            return False
         return True
     return any(ip in net for net in _BLOCKED_NETWORKS)
 

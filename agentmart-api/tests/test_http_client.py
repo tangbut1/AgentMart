@@ -7,6 +7,7 @@ import pytest
 
 from app.infra.http_client import (
     UnsafeURLError,
+    _ip_is_blocked,
     _pinned_url,
     _host_header,
     resolve_and_pin,
@@ -92,3 +93,55 @@ def test_pinned_url_brackets_ipv6():
 def test_host_header_omits_default_port():
     target = resolve_and_pin("https://example.com:443/x")
     assert _host_header(target) == "example.com"
+
+
+# ---- Fake-IP 代理（Clash / Mihido / Surge TUN）----
+# 这类代理把域名解析到 198.18.0.0/15，再由代理转发到真正的公网。
+# RFC 2544 把这段划给基准测试，Python 的 ipaddress 因此判 is_private=True，
+# 早期实现把它和内网一起拒掉，导致开着代理的开发者一调外部接口就全量失败。
+# 现在做成显式开关：默认仍旧拦死，只有明确打开才放开，且只放开这一段。
+
+def _with_fake_ip(monkeypatch, value: str):
+    monkeypatch.setenv("AGENTMART_ALLOW_FAKE_IP", value)
+
+
+def test_fake_ip_is_blocked_by_default(monkeypatch):
+    """默认必须拦住：大多数机器上 198.18.x.x 不可路由，放开了也没用。"""
+    monkeypatch.delenv("AGENTMART_ALLOW_FAKE_IP", raising=False)
+    ip = ipaddress.ip_address("198.18.0.1")
+    assert _ip_is_blocked(ip) is True
+    with pytest.raises(UnsafeURLError):
+        validate_url("http://198.18.0.1/x")
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+def test_fake_ip_allowed_only_with_explicit_switch(monkeypatch, value):
+    _with_fake_ip(monkeypatch, value)
+    ip = ipaddress.ip_address("198.18.0.1")
+    assert _ip_is_blocked(ip) is False
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "off", "banana"])
+def test_fake_ip_still_blocked_for_unrecognized_values(monkeypatch, value):
+    _with_fake_ip(monkeypatch, value)
+    assert _ip_is_blocked(ipaddress.ip_address("198.18.0.1")) is True
+
+
+def test_switch_does_not_open_other_private_ranges(monkeypatch):
+    """开关只放开 198.18.0.0/15 这一段，别的内网照旧拦住。"""
+    _with_fake_ip(monkeypatch, "1")
+    for ip in ("192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1", "169.254.169.254"):
+        assert _ip_is_blocked(ipaddress.ip_address(ip)) is True, ip
+
+
+def test_switch_does_not_open_addresses_outside_fake_ip_range(monkeypatch):
+    """只放开 198.18.0.0/15 这一段；段外的保留地址照旧拦住。
+
+    注意只列**本来就该被拦**的地址。公网地址（如 1.1.1.1）从来就不拦，
+    拿它来断言会得到一个假阳性通过。
+    """
+    _with_fake_ip(monkeypatch, "1")
+    for ip in ("198.51.100.7", "203.0.113.9", "192.0.2.1"):
+        assert _ip_is_blocked(ipaddress.ip_address(ip)) is True, ip
+    # 公网地址依旧通行（开关不影响正常访问）
+    assert _ip_is_blocked(ipaddress.ip_address("1.1.1.1")) is False

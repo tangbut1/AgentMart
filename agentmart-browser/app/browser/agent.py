@@ -110,6 +110,12 @@ _LINK_WAIT_SECONDS = 12.0
 _LINK_POLL_SECONDS = 0.5
 
 
+def _short_reason(exc: BaseException, limit: int = 160) -> str:
+    """把底层异常压成一行可读的原因，去掉多行堆栈。"""
+    text = " ".join(str(exc).split())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
 class BlockedPlatform(RuntimeError):
     """平台阻止了自动访问。"""
 
@@ -1014,9 +1020,13 @@ class ShoppingAgent:
     async def _goto(self, driver: BrowserDriver, state: PlatformState, url: str) -> bool:
         try:
             ok = await asyncio.wait_for(driver.goto(url, timeout_ms=20000), timeout=30)
-        except DriverError:
+        except DriverError as exc:
+            # 底层原因要落到执行记录里。之前这里只 return False，用户看到
+            # "无法打开首页"却完全不知道是超时、证书还是连接被拒。
+            state.log(ActionKind.NAVIGATE, f"打开失败：{_short_reason(exc)}", url=url)
             return False
         except asyncio.TimeoutError:
+            state.log(ActionKind.NAVIGATE, "打开超时：20 秒内页面没加载完成", url=url)
             return False
         if ok:
             state.pages_visited += 1
@@ -1079,6 +1089,12 @@ class ShoppingAgent:
                 "平台提示访问过于频繁/搜索被限制（常见原因是短期内同一账号"
                 "或网络搜索次数偏多）。已停止该平台的自动访问——不会用重试"
                 "绕过它。请隔一段时间再试，或改用您手动提供的商品链接。",
+            )
+        if probe.get("unavailable"):
+            raise BlockedPlatform(
+                BlockedReason.NAVIGATION_FAILED,
+                "搜索入口返回网关错误（502/504），这个地址可能已失效。"
+                "已停止该平台，不会反复重试；可以改用您手动提供的商品链接。",
             )
         if probe.get("loginWall"):
             raise BlockedPlatform(

@@ -40,19 +40,31 @@ JS_LOGIN_PROBE = r"""
 """
 
 # 风控/验证码探测
-# 注意：京东限流时的原文是「抱歉由于访问频繁导致无法搜索，请稍后再试」，
-# 早期正则只写了「访问过于频繁」，匹配不上，于是把它误报成
-# "页面结构可能已变化或需要登录"——告诉用户一个错误的原因。
-# 这里按"限流/被拦"的语义来写，不依赖某一家的具体措辞。
+# 三个信号分开报，因为给用户的原因必须准确——说错原因比没有原因更糟：
+#
+# 1. captcha：页面明确是验证码/滑块。
+# 2. risk：被平台限制。京东限流页原文是「抱歉由于访问频繁导致无法搜索，
+#    请稍后再试」，早期正则只写「访问过于频繁」，匹配不上，于是把限流误报成
+#    "页面结构可能已变化或需要登录"——告诉用户一个错误的原因，他照着去
+#    重新登录也不会好。京东的验证页会跳到
+#    cfe.m.jd.com/privatedomain/risk_handler/...，那种页面只有"验证一下"和
+#    "前往登录"，文案匹配不上，只能靠 URL 认。
+# 3. unavailable：搜索端点本身挂了，返回 502/504 的网关错误页（抖音
+#    haohuo.jinritemai.com/search 实测就是这样）。页面里没有任何商品，
+#    但也不能说成"页面结构无法识别"。
 JS_BLOCKED_PROBE = r"""
 () => {
   const text = (document.body && document.body.innerText || '').slice(0, 3000);
+  const title = document.title || '';
   const url = location.href;
   const captcha = /验证码|滑块|安全验证|人机识别|请完成验证|nc_icon|punish/.test(text)
     || /captcha|punish|verify/.test(url);
-  const risk = /访问过于频繁|操作过于频繁|访问频繁|无法搜索|稍后再试|刷新太重|系统繁忙|异常流量|风控|已被限制|暂时无法/.test(text);
+  const risk = /访问过于频繁|操作过于频繁|访问频繁|无法搜索|稍后再试|刷新太重|系统繁忙|异常流量|风控|已被限制|暂时无法/.test(text)
+    || /risk_handler|privatedomain|risk_verify|slider_verify/.test(url);
+  const unavailable = /502 Bad Gateway|504 Gateway|Bad Gateway|Gateway Time-?out|TLB|服务繁忙|系统维护/.test(text)
+    || /^(502|503|504)\b/.test(title);
   const loginWall = /请登录后查看|登录后可见|请先登录/.test(text);
-  return { captcha, risk, loginWall };
+  return { captcha, risk, unavailable, loginWall };
 }
 """
 
@@ -259,9 +271,16 @@ PLATFORM_RECIPES: Dict[Platform, Recipe] = {
         platform=Platform.DOUYIN,
         display_name="抖音电商",
         home_url="https://haohuo.jinritemai.com",
+        # 实测（2026-09-25）：/search?keyword= 返回 502/504 的 TLB 网关错误页，
+        # 站点首页 200 但所有搜索路径都不可用。这里保留地址但如实标注，
+        # 不假装它能用；真正可用之前，抖音请走"手动提供商品链接"。
         search_url_template="https://haohuo.jinritemai.com/search?keyword={kw}",
         requires_login_for_price=True,
-        notes="抖音商城页面需要登录；直播间价格与券在登录后展示。",
+        notes=(
+            "抖音商城搜索入口当前返回网关错误（502/504），暂不可用；"
+            "已如实标注，不会用演示数据补齐。请改用其它平台，"
+            "或直接提供抖音商品链接。"
+        ),
     ),
 }
 
