@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "购物参谋 · 比价侧边栏",
+  "version": "1.0.0",
+  "description": "在您自己的浏览器里读当前商品页，算清确定到手价和待确认优惠，并去其它平台找同款。只读：不领券、不加购、不代下单、不代付款。",
+  "minimum_chrome_version": "114",
+  "permissions": ["sidePanel", "scripting", "storage"],
+  "host_permissions": [
+    "*://*.jd.com/*",
+    "*://*.3.cn/*",
+    "*://*.taobao.com/*",
+    "*://*.tmall.com/*",
+    "*://*.pinduoduo.com/*",
+    "*://*.yangkeduo.com/*",
+    "*://*.jinritemai.com/*",
+    "*://*.douyin.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "打开购物参谋侧边栏",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

@@ -19,6 +19,7 @@ htmlcov/
 # ---- Node / frontend ----
 node_modules/
 frontend/dist/
+frontend/dist-extension/
 npm-debug.log*
 
 # ---- 个人浏览器版的登录态（绝不上传、绝不提交）----

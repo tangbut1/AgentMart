@@ -219,8 +219,11 @@ def detect_traps(
             evidence=no_return,
             question="不支持7天无理由，你还想买吗？",
         )
-    elif not _first_match(_RETURN_WINDOW_RE, policy):
+    elif not no_return and not _first_match(_RETURN_WINDOW_RE, policy):
         # 政策栏里完全没有"7天无理由"—— 这是"没看到"，不是"没有"。
+        # 但页面已经白纸黑字写了"不退不换"时（哪怕为了去重只报了 special），
+        # 不能再问一遍"支持7天无理由退货吗"：那句话问的是页面没答的事，
+        # 而这里页面已经答了。
         add(
             TrapKind.NO_RETURN_WINDOW,
             "页面未显示7天无理由",

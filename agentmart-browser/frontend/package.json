@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:extension": "npm run icons && tsc --noEmit && node scripts/build-extension.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "test:extension": "node --test extension/tests/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -14,6 +17,8 @@
     "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.20.4",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",

@@ -1,0 +1,97 @@
+/* 侧面板专用样式。
+ *
+ *  只放侧边栏这一窄场景需要的东西（输入框、chip、滚动容器）。
+ *  PurchaseCard / BrowserCompare / Badge / Notice 全部沿用网页版的
+ *  styles.css，不复制一份 —— 复制就会出现「两边长得不一样」的漂移。
+ */
+
+.sidepanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 14px 20px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.sidepanel__head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sidepanel__head strong {
+  font-size: 14px;
+}
+
+.sidepanel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidepanel__scroll {
+  max-height: 60vh;
+  overflow: auto;
+  /* 侧面板里横向滚对比表，不把整个面板撑宽 */
+  overflow-x: auto;
+}
+
+.sidepanel__foot {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+}
+
+.sidepanel .input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.sidepanel .input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.sidepanel .chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sidepanel .chip--on {
+  border-color: var(--primary);
+  background: var(--primary-tint);
+  color: var(--primary-deep);
+}
+
+.sidepanel .purchase-card,
+.sidepanel .panel {
+  background: var(--surface);
+}
+
+.sidepanel .btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.sidepanel .btn--primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

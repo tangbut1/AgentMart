@@ -1,0 +1,506 @@
+{
+  "_comment": "扩展 TypeScript 核心与 Python app/browser + app/domain 的一致性校验语料。字段名与 app/browser/extract.py 的 PageFields.from_js 一致（camelCase），两侧读同一个文件。新增分支时往这里加用例，不要只加一侧的测试。",
+  "cases": [
+    {
+      "name": "plain-jd-self-operated",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100012043978.html",
+        "title": "Apple iPhone 15 (A3092) 128GB 黑色 支持移动联通电信5G 双卡双待",
+        "priceText": "¥3299.00",
+        "priceSource": "dom",
+        "shopName": "Apple产品京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": "颜色：黑色；容量：128GB",
+        "couponTexts": [],
+        "policyTexts": ["7天无理由退货", "全国联保", "退货运费险", "假一赔十", "可开发票", "价保30天"],
+        "regionText": "江苏省",
+        "salesText": "已售 1200 件",
+        "evidence": {
+          "title": "Apple iPhone 15 (A3092) 128GB 黑色",
+          "price": "selector :: ¥3299.00",
+          "sales": "已售 1200 件"
+        }
+      }
+    },
+    {
+      "name": "coupon-claimed-and-action",
+      "platform": "tmall",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=678901234567",
+        "title": "Sony WH-1000XM5 头戴式无线降噪耳机 蓝牙5.2",
+        "priceText": "2899.00",
+        "priceSource": "dom",
+        "shopName": "索尼官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": "颜色：银色",
+        "couponTexts": ["满2000减200 已领取", "店铺优惠券 满1000减50 去领取"],
+        "policyTexts": ["7天无理由退货", "运费险"],
+        "regionText": null,
+        "salesText": "月销 3000+",
+        "evidence": { "price": "selector :: 2899.00" }
+      }
+    },
+    {
+      "name": "coupon-threshold-missed",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100056789012.html",
+        "title": "Anker 65W 氮化镓充电器 双C口",
+        "priceText": "99.00",
+        "priceSource": "dom",
+        "shopName": "安克官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["满1000减100 已领取"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": {}
+      }
+    },
+    {
+      "name": "coupon-percent-discount",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=712345678901",
+        "title": "Dyson V12 Detect Slim 无线吸尘器",
+        "priceText": "1234.56",
+        "priceSource": "dom",
+        "shopName": "dyson官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["限时活动 8.5折 已领取"],
+        "policyTexts": ["7天无理由退货", "运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 1234.56" }
+      }
+    },
+    {
+      "name": "coupon-unavailable-and-payment",
+      "platform": "pdd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://mobile.pinduoduo.com/goods.html?goods_id=998877665544",
+        "title": "小米 Redmi Buds 6 真无线蓝牙耳机",
+        "priceText": "129.90",
+        "priceSource": "dom",
+        "shopName": "小米手机数码专营店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["已抢光 满200减30", "支付宝支付立减20元"],
+        "policyTexts": ["7天无理由退货", "退货包运费"],
+        "regionText": null,
+        "salesText": "已拼 10万+ 件",
+        "evidence": { "price": "selector :: 129.90" }
+      }
+    },
+    {
+      "name": "subsidy-percent-region-matches",
+      "platform": "jd",
+      "user_region": "江苏省",
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100098765432.html",
+        "title": "海尔 一级能效 对开门冰箱 532升 BCD-532WGHSS",
+        "priceText": "4999.00",
+        "priceSource": "dom",
+        "shopName": "海尔京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": "能效等级：一级",
+        "couponTexts": ["国补15% 限江苏省用户", "以旧换新补贴 减300元"],
+        "policyTexts": ["7天无理由退货", "退货运费险", "全国联保"],
+        "regionText": "江苏省",
+        "salesText": "已售 800 件",
+        "evidence": { "price": "selector :: 4999.00" }
+      }
+    },
+    {
+      "name": "subsidy-percent-region-conflicts",
+      "platform": "jd",
+      "user_region": "浙江省",
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100098765432.html",
+        "title": "海尔 一级能效 对开门冰箱 532升 BCD-532WGHSS",
+        "priceText": "4999.00",
+        "priceSource": "dom",
+        "shopName": "海尔京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": "能效等级：一级",
+        "couponTexts": ["国补15% 限江苏省用户"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": "浙江省",
+        "salesText": null,
+        "evidence": { "price": "selector :: 4999.00" }
+      }
+    },
+    {
+      "name": "subsidy-region-limit-without-user-region",
+      "platform": "tmall",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=612345678901",
+        "title": "格力 新一级能效 空调挂机 1.5匹 KFR-35GW",
+        "priceText": "2899.00",
+        "priceSource": "dom",
+        "shopName": "格力官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["国补15% 限江苏省用户"],
+        "policyTexts": ["7天无理由退货"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 2899.00" }
+      }
+    },
+    {
+      "name": "subsidy-amount-and-vague",
+      "platform": "taobao",
+      "user_region": "广东省",
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=698765432112",
+        "title": "华为 Mate 70 Pro 12GB+512GB 雅川青",
+        "priceText": "6999.00",
+        "priceSource": "dom",
+        "shopName": "华为官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["国家补贴 减500元", "百亿补贴 限时抢购"],
+        "policyTexts": ["7天无理由退货", "运费险"],
+        "regionText": "广东省",
+        "salesText": null,
+        "evidence": { "price": "selector :: 6999.00" }
+      }
+    },
+    {
+      "name": "subsidy-uses-page-region",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100011112222.html",
+        "title": "美的 一级能效 滚筒洗衣机 10kg MG100V",
+        "priceText": "2199.00",
+        "priceSource": "dom",
+        "shopName": "美的京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": null,
+        "couponTexts": ["国补15% 限江苏省"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": "江苏省",
+        "salesText": null,
+        "evidence": { "price": "selector :: 2199.00" }
+      }
+    },
+    {
+      "name": "trap-activation-locked",
+      "platform": "tmall",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=655443322110",
+        "title": "Apple iPhone 16 Pro (A3294) 256GB 原色钛金属",
+        "priceText": "8999.00",
+        "priceSource": "dom",
+        "shopName": "Apple Store官方旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": ["激活后不支持7天无理由退货", "7天无理由退货", "运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 8999.00" }
+      }
+    },
+    {
+      "name": "trap-non-mainland-in-title",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=655443322999",
+        "title": "Apple iPhone 16 (A3288) 128GB 港版 黑色",
+        "priceText": "5299.00",
+        "priceSource": "dom",
+        "shopName": "优品数码专营店",
+        "selfOperatedHint": false,
+        "skuText": "版本：港版",
+        "couponTexts": [],
+        "policyTexts": ["7天无理由退货", "运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 5299.00" }
+      }
+    },
+    {
+      "name": "trap-return-and-insurance-not-shown",
+      "platform": "pdd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://mobile.pinduoduo.com/goods.html?goods_id=665544332211",
+        "title": "通用 Type-C 数据线 1.5米",
+        "priceText": "9.90",
+        "priceSource": "dom",
+        "shopName": "迅捷配件专营店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": ["全国联保", "可开发票"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 9.90" }
+      }
+    },
+    {
+      "name": "trap-special-no-return-dedup",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=655443322888",
+        "title": "清仓样品机 展示柜 90cm",
+        "priceText": "199.00",
+        "priceSource": "dom",
+        "shopName": "家具工厂店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": ["特价商品不退不换", "运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 199.00" }
+      }
+    },
+    {
+      "name": "policy-category-classification",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100011110000.html",
+        "title": "联想 ThinkPad X1 Carbon 2026 14英寸",
+        "priceText": "12999.00",
+        "priceSource": "dom",
+        "shopName": "联想京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": [
+          "激活后不支持7天无理由退货",
+          "7天无理由退货",
+          "全国联保",
+          "退货运费险",
+          "假一赔十",
+          "可开发票",
+          "价保30天",
+          "支持以旧换新"
+        ],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 12999.00" }
+      }
+    },
+    {
+      "name": "policy-text-truncation",
+      "platform": "tmall",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=600011110000",
+        "title": "样机 长文案商品",
+        "priceText": "100.00",
+        "priceSource": "dom",
+        "shopName": "测试旗舰店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": [
+          "七天无理由退货服务说明：自商品签收之日起七日内，在保证商品完好的前提下，顾客有权申请无理由退货，具体以店铺公示为准，详情请咨询客服人员。"
+        ],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 100.00" }
+      }
+    },
+    {
+      "name": "vision-price-unverified",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=655443322777",
+        "title": "Bose QC45 消噪耳机",
+        "priceText": "¥1999.00",
+        "priceSource": "vision",
+        "shopName": "优品数码专营店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": {}
+      }
+    },
+    {
+      "name": "no-price-no-shop",
+      "platform": "douyin",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://haohuo.jinritemai.com/goods/detail?id=744556677889",
+        "title": "某直播间专享商品 价格未展示",
+        "priceText": null,
+        "priceSource": "dom",
+        "shopName": null,
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": [],
+        "policyTexts": [],
+        "regionText": null,
+        "salesText": null,
+        "evidence": {}
+      }
+    },
+    {
+      "name": "page-region-with-delivery-prefix",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100022223333.html",
+        "title": "TCL 一级能效电视 75英寸 75V8G",
+        "priceText": "3999.00",
+        "priceSource": "dom",
+        "shopName": "TCL京东自营旗舰店",
+        "selfOperatedHint": true,
+        "skuText": null,
+        "couponTexts": ["国补15% 限江苏省"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": "配送至 江苏省",
+        "salesText": null,
+        "evidence": { "price": "selector :: 3999.00" }
+      }
+    },
+    {
+      "name": "many-coupons-mixed",
+      "platform": "tmall",
+      "user_region": "上海市",
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://detail.tmall.com/item.htm?id=699887766554",
+        "title": "三星 990 PRO 2TB NVMe SSD MZ-V9P2T0",
+        "priceText": "1399.00",
+        "priceSource": "dom",
+        "shopName": "三星存储旗舰店",
+        "selfOperatedHint": false,
+        "skuText": "容量：2TB",
+        "couponTexts": [
+          "满1000减100 已领取",
+          "88VIP 95折 已享",
+          "花呗分期免息 12期",
+          "国补15% 限上海市",
+          "已失效 满500减20"
+        ],
+        "policyTexts": ["7天无理由退货", "退货运费险", "全国联保"],
+        "regionText": "上海市",
+        "salesText": "月销 500",
+        "evidence": { "price": "selector :: 1399.00", "coupons": "满1000减100 已领取" }
+      }
+    },
+    {
+      "name": "rounding-half-even-coupon-percent",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=655443322666",
+        "title": "手机支架 桌面懒人款",
+        "priceText": "5.00",
+        "priceSource": "dom",
+        "shopName": "配件工厂店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["8.5折 已领取"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 5.00" }
+      }
+    },
+    {
+      "name": "rounding-half-even-subsidy-percent",
+      "platform": "jd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.jd.com/100033334444.html",
+        "title": "LED 灯泡 E27 螺口 5W 暖白",
+        "priceText": "2.30",
+        "priceSource": "dom",
+        "shopName": "照明专营店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["国补15%"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 2.30" }
+      }
+    },
+    {
+      "name": "discount-exceeds-price-negative-total",
+      "platform": "taobao",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://item.taobao.com/item.htm?id=655443322555",
+        "title": "数据线 1米",
+        "priceText": "99.00",
+        "priceSource": "dom",
+        "shopName": "配件工厂店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["已领取 减200元"],
+        "policyTexts": ["7天无理由退货", "退货运费险"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 99.00" }
+      }
+    },
+    {
+      "name": "threshold-with-decimal-and-cents-coupon",
+      "platform": "pdd",
+      "user_region": null,
+      "source_label": "side-panel",
+      "fields": {
+        "url": "https://mobile.pinduoduo.com/goods.html?goods_id=665544332200",
+        "title": "钢化膜 两片装",
+        "priceText": "50.00",
+        "priceSource": "dom",
+        "shopName": "膜法工场专营店",
+        "selfOperatedHint": false,
+        "skuText": null,
+        "couponTexts": ["已领取 满99.5减10", "店铺券 优惠19.99元"],
+        "policyTexts": ["7天无理由退货"],
+        "regionText": null,
+        "salesText": null,
+        "evidence": { "price": "selector :: 50.00" }
+      }
+    }
+  ]
+}
