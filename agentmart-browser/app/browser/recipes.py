@@ -228,6 +228,14 @@ class Recipe:
     requires_login_for_price: bool = False
     notes: str = ""
     extra_js: Dict[str, str] = field(default_factory=dict)
+    # 登录窗口打开的地址。默认跟首页一样，但有些平台首页在 Chromium 里
+    # 会触发文件下载（抖音实测：haohuo.jinritemai.com 一打开就
+    # "Page.goto: Download is starting"），goto 直接抛异常，用户看到的
+    # 就是一个空白窗口，还以为功能坏了。这种平台单独指定一个能用的入口。
+    login_url: str = ""
+
+    def login_entry(self) -> str:
+        return self.login_url or self.home_url
 
 
 def _search(keyword: str) -> str:
@@ -271,9 +279,15 @@ PLATFORM_RECIPES: Dict[Platform, Recipe] = {
         platform=Platform.DOUYIN,
         display_name="抖音电商",
         home_url="https://haohuo.jinritemai.com",
-        # 实测（2026-09-25）：/search?keyword= 返回 502/504 的 TLB 网关错误页，
-        # 站点首页 200 但所有搜索路径都不可用。这里保留地址但如实标注，
-        # 不假装它能用；真正可用之前，抖音请走"手动提供商品链接"。
+        # 实测（2026-09-25）：抖音商城首页在 Chromium 里一打开就触发文件下载，
+        # goto 直接抛 "Page.goto: Download is starting"，登录窗口会停在空白页。
+        # 抖音主站 www.douyin.com 能正常打开，登录窗口走这个地址，
+        # 让用户至少能把账号登上。
+        login_url="https://www.douyin.com",
+        # 实测（2026-09-25）：/search?keyword= 和 /search_result.html 两条
+        # 搜索路径都返回 502 Bad Gateway（TLB 网关错误页），站点本身活着但
+        # 搜索全挂。这里保留地址但如实标注，不假装它能用；真正可用之前，
+        # 抖音请走"手动提供商品链接"。
         search_url_template="https://haohuo.jinritemai.com/search?keyword={kw}",
         requires_login_for_price=True,
         notes=(

@@ -9,14 +9,14 @@ import {
 } from "../lib/browserApi";
 import { PLATFORM_LABEL } from "../lib/format";
 import { Badge, Icon, Notice, Segmented, type BadgeTone } from "../components/ui";
+import {
+  EMPTY_FIELDS,
+  RequirementForm,
+  toDraftPayload,
+  type RequirementDraft,
+} from "../components/RequirementForm";
 
 const ALL_PLATFORMS: BrowserPlatform[] = ["jd", "taobao", "tmall", "pdd", "douyin"];
-
-const EXAMPLES = [
-  "预算 500～800 元，买一件适合日常通勤和轻度徒步的冲锋衣，重视防雨和透气",
-  "想买一部手机，预算 3000 元左右，重视续航和信号，看看有没有我能享受的国补",
-  "索尼 WH-1000XM5，预算 2500 元，只算平台标价和店铺券，不要会员方案",
-];
 
 type Mode = "browser" | "api";
 
@@ -32,7 +32,10 @@ function loginTone(state?: string): BadgeTone {
 export default function BrowserHomePage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("browser");
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useState<RequirementDraft>({
+    text: "",
+    fields: EMPTY_FIELDS,
+  });
   const [platforms, setPlatforms] = useState<BrowserPlatform[]>(ALL_PLATFORMS);
   const [maxCandidates, setMaxCandidates] = useState(6);
   const [info, setInfo] = useState<ModeInfo | null>(null);
@@ -116,9 +119,13 @@ export default function BrowserHomePage() {
   }, []);
 
   const start = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed) {
-      setError("请先描述你想买什么");
+    const payload = toDraftPayload(draft);
+    if (!payload.text && !payload.fields.keyword) {
+      setError("请先填「要买什么」，或者用一句话描述");
+      return;
+    }
+    if (!payload.fields.keyword) {
+      setError("请填写「要买什么」——这是实际拿去各平台搜索的词");
       return;
     }
     if (platforms.length === 0) {
@@ -129,7 +136,8 @@ export default function BrowserHomePage() {
     setError(null);
     try {
       const task = await browserApi.createTask({
-        text: trimmed,
+        text: payload.text,
+        fields: payload.fields,
         platforms,
         options: { max_candidates: maxCandidates },
       });
@@ -139,7 +147,7 @@ export default function BrowserHomePage() {
     } finally {
       setBusy(false);
     }
-  }, [text, platforms, maxCandidates, navigate]);
+  }, [draft, platforms, maxCandidates, navigate]);
 
   // 只有"从未登进去过"的平台才算没登录。verified_before 是本机探测到过
   // 已登录的，不该再弹"还没登录"的警告——用户刚登好却被说没登，很困惑。
@@ -209,39 +217,13 @@ export default function BrowserHomePage() {
               </span>
               <h2 className="section-title">
                 说清楚你要买什么
-                <span className="section-note">预算、用途、在意的点，用大白话写就行</span>
+                <span className="section-note">
+                  填表最稳，也可以写一句话自动填好
+                </span>
               </h2>
             </div>
             <div className="panel__body stack gap-16">
-              <div className="field">
-                <label className="field__label" htmlFor="req-text">
-                  购物需求
-                </label>
-                <textarea
-                  id="req-text"
-                  className="textarea"
-                  rows={3}
-                  value={text}
-                  placeholder="例如：预算 500～800 元，买一件适合日常通勤和轻度徒步的冲锋衣，重视防雨和透气"
-                  onChange={(e) => setText(e.target.value)}
-                />
-                <div className="field__hint">
-                  只有影响判断的信息缺失时才会向你追问；配送地区、品类、预算会被自动识别。
-                </div>
-              </div>
-
-              <div className="row gap-8 wrap">
-                {EXAMPLES.map((example) => (
-                  <button
-                    key={example}
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => setText(example)}
-                  >
-                    {example.slice(0, 18)}…
-                  </button>
-                ))}
-              </div>
+              <RequirementForm draft={draft} onChange={setDraft} disabled={busy} />
 
               <div className="stack gap-8">
                 <div className="field__label">参与比价的平台</div>

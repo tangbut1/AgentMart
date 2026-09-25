@@ -38,7 +38,7 @@ from .extract import (
     build_offer,
     parse_money,
 )
-from .llm import BudgetExceeded, ModelClient, ModelError
+from .llm import BudgetExceeded, ModelClient, ModelError, model_configured
 from .login import LoginManager, LoginSession, LoginUnavailable
 from .profiles import (
     all_profiles,
@@ -81,10 +81,26 @@ _BRANDS = [
 _REGION_RE = re.compile(
     r"(?:配送至|收货地?|地区|所在地?)[：:\s]*([一-龥]{2,12}?(?:省|市|自治区|特别行政区))"
 )
-_BUDGET_RANGE_RE = re.compile(
-    r"(?:预算|价钱|价格|花费)?\s*([0-9]{2,7})\s*(?:元|块)?\s*(?:~|～|-|—|到|至)\s*"
-    r"([0-9]{2,7})\s*(?:元|块)"
+# 价格区间有两种写法，拆成两条正则，因为二者的"可信度门槛"不同：
+#
+# A. 带了"预算/价钱/价格/花费"字样 —— 用户已经明说这是在说钱，
+#    所以句末、标点后面也认："预算100到250"（没写单位、话没说完）。
+_BUDGET_RANGE_LABELLED_RE = re.compile(
+    r"(?:预算|价钱|价格|花费)\s*(?:在|是|为|：|:)?\s*([0-9]{2,7})\s*(?:元|块)?\s*"
+    r"(?:~|～|-|—|到|至)\s*([0-9]{2,7})\s*(?:元|块)?"
+    r"(?=\s*(?:元|块|之间|以内|以下|之内|左右|上下|的|，|,|。|；|;|！|!|？|\?|$))"
 )
+# B. 没带这些字样 —— 必须紧跟单位或"之间/以内"这类边界词才算。
+#    少了这条门槛，"iPhone 15-16""出差15-20天"都会被当成价格区间。
+_BUDGET_RANGE_RE = re.compile(
+    r"([0-9]{2,7})\s*(?:元|块)?\s*(?:~|～|-|—|到|至)\s*([0-9]{2,7})"
+    # 前瞻只判断"这是不是预算"，不消耗字符
+    r"(?=\s*(?:元|块|之间|以内|以下|之内|左右|上下))"
+    # 判断通过后再把单位吃掉，免得"100到250元的西装"剩下一个孤零零的"元"
+    # 混进搜索词（实测关键词变成"元 西装"）
+    r"\s*(?:元|块)?"
+)
+_BUDGET_RANGE_RES = (_BUDGET_RANGE_LABELLED_RE, _BUDGET_RANGE_RE)
 _BUDGET_SINGLE_RE = re.compile(r"([0-9]{2,7})\s*(?:元|块)\s*(?:左右|以内|上下|以下|之内)")
 # "预算 800 以内" 这类没写"元"的说法；带"预算"二字才认，避免把"10年以内"当成预算
 _BUDGET_PREFIX_RE = re.compile(
@@ -93,7 +109,7 @@ _BUDGET_PREFIX_RE = re.compile(
 
 # 口语里与商品无关的连接词/请求词，构造搜索词时剥掉
 _FILLER_RE = re.compile(
-    r"预算|价钱|价格|花费|左右|上下|前后|以内|以下|之内|"
+    r"预算|价钱|价格|花费|左右|上下|前后|以内|以下|之内|之间|"
     r"想买|想要|打算|我要|我需要|我想|请|帮我|帮忙|给|找个|寻找|找|"
     r"买一件|买一个|买一部|买一台|买一款|买|一件|一个|一部|一台|一款|"
     r"看看有没有|看一下|看看|有没有|推荐一下|推荐|适合|用于|重视|看重|关注|"
@@ -186,7 +202,7 @@ def _search_keyword(raw: str, requirement: "Requirement") -> str:
     的片段和字母数字型号。提炼不出更好结果时就退回原文，绝不编造关键词。
     """
     text = raw
-    for regex in (_BUDGET_RANGE_RE, _BUDGET_SINGLE_RE, _BUDGET_PREFIX_RE):
+    for regex in (*_BUDGET_RANGE_RES, _BUDGET_SINGLE_RE, _BUDGET_PREFIX_RE):
         text = regex.sub(" ", text)
     text = _REGION_RE.sub(" ", text)
     text = _FILLER_RE.sub(" ", text)
@@ -223,7 +239,11 @@ def parse_requirement(text: str) -> Requirement:
             requirement.category = category
             break
 
-    m = _BUDGET_RANGE_RE.search(raw)
+    m = None
+    for regex in _BUDGET_RANGE_RES:
+        m = regex.search(raw)
+        if m:
+            break
     if m:
         low, high = Decimal(m.group(1)), Decimal(m.group(2))
         if low <= high:
@@ -259,6 +279,137 @@ def parse_requirement(text: str) -> Requirement:
     if requirement.keyword == raw:
         # 没能提炼出更好的搜索词时才保留原句
         requirement.keyword = _search_keyword(raw, requirement)
+    return requirement
+
+
+# 结构化填表允许的字段。表单里填了什么就用什么，没填的才回退到自然语言解析。
+_REQUIREMENT_FIELDS = (
+    "keyword", "category", "budget_min", "budget_max", "budget_approximate",
+    "brands", "region", "scenarios",
+)
+# 预算上限的合理范围。超过这个数基本是用户多打了零或填错了单位，
+# 与其照着搜一堆不可能的结果，不如当场告诉用户。
+_MONEY_MAX = Decimal("99999999")
+
+
+def _to_money(value: Any, label: str) -> Optional[Decimal]:
+    """把表单里的金额转成 Decimal；填得不像数字就直接报错，不猜。"""
+    if value is None or value == "":
+        return None
+    text = str(value).strip().replace(",", "").replace("，", "")
+    if not text:
+        return None
+    try:
+        amount = Decimal(text)
+    except Exception:
+        raise ValueError(f"{label}要填数字，收到的是「{value}」") from None
+    if amount.is_nan() or amount < 0:
+        raise ValueError(f"{label}不能是负数")
+    if amount > _MONEY_MAX:
+        raise ValueError(f"{label}看起来不合理：{amount}（上限 {_MONEY_MAX}）")
+    return amount
+
+
+def _to_str_list(value: Any) -> List[str]:
+    """品牌/场景既可能是数组也可能是"华为，小米"这样的字符串。"""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items = [str(v).strip() for v in value]
+    else:
+        items = re.split(r"[,，、;；\s]+", str(value))
+    seen: List[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def _describe_requirement(requirement: "Requirement") -> str:
+    """把结构化字段拼成一句人能读的话，用于任务记录和界面回显。
+
+    只在用户没写自然语言时用；写了自己原话的仍然保留原话。
+    """
+    parts: List[str] = []
+    if requirement.keyword:
+        parts.append(requirement.keyword)
+    if requirement.category:
+        parts.append(f"品类：{requirement.category}")
+    if requirement.budget_min and requirement.budget_max:
+        parts.append(
+            f"预算 {requirement.budget_min}–{requirement.budget_max} 元"
+            + ("（约）" if requirement.budget_approximate else "")
+        )
+    elif requirement.budget_max:
+        parts.append(
+            f"预算不超过 {requirement.budget_max} 元"
+            + ("（约）" if requirement.budget_approximate else "")
+        )
+    elif requirement.budget_min:
+        parts.append(f"预算不低于 {requirement.budget_min} 元")
+    if requirement.brands:
+        parts.append("品牌：" + "、".join(requirement.brands))
+    if requirement.region:
+        parts.append(f"配送至{requirement.region}")
+    if requirement.scenarios:
+        parts.append("在意：" + "、".join(requirement.scenarios))
+    return "，".join(parts)
+
+
+def build_requirement(
+    text: str, fields: Optional[Dict[str, Any]] = None
+) -> Requirement:
+    """按「结构化填表 > 自然语言解析」合成最终需求。
+
+    为什么不改用大模型解析自然语言（评估过，明确不选）：
+    1. 价格是这个产品最不能出错的一项。模型把"100到250之间"读成 max=100，
+       或者补一个句子里根本没有的数字，就是凭空造价 —— 直接违反
+       "绝不编造任何价格"这条红线。正则读错至少是固定的错，能写测试钉住；
+    2. 用户机器上不一定配了模型 Key，核心链路不能依赖一个可能不存在的东西；
+    3. 确定性规则可以回归测试，模型解析错了只能等用户再抱怨一次。
+
+    所以自然语言降级为"自动填表"：它负责把一句话拆进表单，
+    最终以表单为准。用户在表单里看到的数字，就是最终用的数字。
+    """
+    raw = (text or "").strip()
+    requirement = parse_requirement(raw) if raw else Requirement(text="", keyword="")
+    if not fields:
+        return requirement
+
+    keyword = str(fields.get("keyword") or "").strip()
+    if keyword:
+        requirement.keyword = keyword
+    category = str(fields.get("category") or "").strip()
+    if category:
+        requirement.category = category
+
+    low = _to_money(fields.get("budget_min"), "预算下限")
+    high = _to_money(fields.get("budget_max"), "预算上限")
+    if low is not None and high is not None and low > high:
+        raise ValueError(f"预算下限 {low} 比上限 {high} 还大，请检查一下")
+    if low is not None or high is not None:
+        # 碰过预算就以表单为准，不再保留从原话里解析出的区间
+        requirement.budget_min, requirement.budget_max = low, high
+        if "budget_approximate" in fields:
+            requirement.budget_approximate = bool(fields["budget_approximate"])
+
+    brands = _to_str_list(fields.get("brands"))
+    if "brands" in fields:
+        requirement.brands = brands
+    region = str(fields.get("region") or "").strip()
+    if region:
+        requirement.region = region
+    scenarios = _to_str_list(fields.get("scenarios"))
+    if "scenarios" in fields:
+        requirement.scenarios = scenarios
+
+    # 用户已经在表单里说清楚的事，不该再弹"未能确定品类"这类追问
+    if keyword or category:
+        requirement.unclear = []
+    if not requirement.text:
+        requirement.text = _describe_requirement(requirement)
+    if not requirement.keyword:
+        requirement.keyword = requirement.text
     return requirement
 
 
@@ -491,6 +642,9 @@ class AgentTask:
             "pending_question": self.pending_question,
             "budget_exhausted": self.budget_exhausted,
             "model_usage": self.model_usage,
+            # 没配模型 Key 时模型调用本来就是 0 次。把这个标记一起下发，
+            # 前端才能把"0 次"说成正常情况，而不是让用户以为流程卡死了。
+            "model_configured": model_configured(),
             "notes": list(self.notes),
             "offer_count": len(self.real_offers),
             "group_count": len(self.canonical),
@@ -905,9 +1059,13 @@ class ShoppingAgent:
     ) -> None:
         recipe = get_recipe(platform)
 
-        # 1) 打开首页，探测登录与风控
+        # 1) 打开站点入口，探测登录与风控
         await self._guard(task, state, cancel_event, deadline)
-        home_url = task.options.override(platform, "home") or recipe.home_url
+        # 用 login_entry() 而不是 home_url：有些平台首页在 Chromium 里会触发
+        # 文件下载（抖音实测），goto 直接失败，报出来的还是"无法打开首页"，
+        # 把真正的原因（搜索入口 502）盖掉了。走能打开的入口，才能在下一步
+        # 给出准确的失败原因。
+        home_url = task.options.override(platform, "home") or recipe.login_entry()
         if not await self._goto(driver, state, home_url):
             raise BlockedPlatform(BlockedReason.NAVIGATION_FAILED, f"无法打开 {home_url}")
         await self._probe_blocked(driver, state, platform)

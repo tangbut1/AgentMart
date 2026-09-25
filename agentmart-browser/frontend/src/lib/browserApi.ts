@@ -133,6 +133,11 @@ export interface TaskView {
   pending_question: PendingQuestion | null;
   budget_exhausted: boolean;
   model_usage: ModelUsage;
+  /**
+   * 本机是否配了模型。没配时模型调用 0 次是正常状态（取数走页面 DOM 规则），
+   * 界面上要能据此说明，而不是让用户以为流程卡死了。
+   */
+  model_configured?: boolean;
   notes: string[];
   offer_count: number;
   group_count: number;
@@ -474,6 +479,8 @@ export const browserApi = {
 
   createTask(payload: {
     text: string;
+    /** 结构化填表字段。最终以它为准，text 只作为补充说明 */
+    fields?: Record<string, unknown>;
     platforms?: BrowserPlatform[];
     options?: Record<string, unknown>;
   }) {

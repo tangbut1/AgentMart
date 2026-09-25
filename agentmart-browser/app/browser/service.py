@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..domain.enums import Platform
 from .agent import AgentTask, ShoppingAgent, TaskOptions, agent as default_agent
-from .agent import parse_requirement
+from .agent import build_requirement, parse_requirement
 from .enums import DataOrigin
 from .llm import ModelError, delete_config, load_config, save_config
 from .login import LoginUnavailable
@@ -194,9 +194,10 @@ class BrowserService:
         *,
         platforms: Optional[List[str]] = None,
         options: Optional[Dict[str, Any]] = None,
+        fields: Optional[Dict[str, Any]] = None,
         session: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
-        requirement = parse_requirement(text)
+        requirement = build_requirement(text, fields)
         selected = [Platform(p) for p in platforms] if platforms else list(Platform)
         task_options = TaskOptions(platforms=selected)
         if options:

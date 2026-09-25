@@ -97,13 +97,22 @@ async def create_task(
     session: AsyncSession = Depends(get_session),
 ) -> Dict[str, Any]:
     text = str(payload.get("text") or "").strip()
-    if not text:
-        raise HTTPException(status_code=422, detail="需求文本不能为空")
+    fields = payload.get("fields")
+    if not text and not fields:
+        raise HTTPException(
+            status_code=422, detail="请填写商品名称，或用一句话描述你想买什么"
+        )
+    if fields is not None and not isinstance(fields, dict):
+        raise HTTPException(status_code=422, detail="fields 必须是对象")
     platforms = payload.get("platforms")
     options = payload.get("options") or {}
-    return await service.create_task(
-        text, platforms=platforms, options=options, session=session
-    )
+    try:
+        return await service.create_task(
+            text, platforms=platforms, options=options, fields=fields, session=session
+        )
+    except ValueError as exc:
+        # 表单填错（预算下限比上限大、金额不是数字）原样告诉用户，不静默改数
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/tasks", summary="历史任务列表")

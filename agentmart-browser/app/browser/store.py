@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
 from .agent import AgentTask, empty_model_usage
+from .llm import model_configured
 
 
 class BrowserTaskRecord(Base):
@@ -208,6 +209,8 @@ def task_view_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "pending_question": record.get("pending_question") or None,
         "budget_exhausted": bool(result.get("budget_exhausted")),
         "model_usage": record.get("model_usage") or empty_model_usage(),
+        # 和内存任务保持一致：历史任务回读时也要能解释"模型调用 0 次"
+        "model_configured": model_configured(),
         "notes": list(record.get("notes") or []),
         "offer_count": int(record.get("offer_count") or 0),
         "group_count": int(record.get("group_count") or 0),

@@ -172,8 +172,10 @@ class LoginManager:
             logger.warning(f"登录窗口打开失败[{group}]: {exc}")
             raise LoginUnavailable(session.message) from exc
 
-        # 打开平台首页，让用户直接在这个页面登录
-        home = get_recipe(platform).home_url
+        # 打开平台登录入口，让用户直接在这个页面登录。
+        # 用 recipe.login_entry() 而不是 home_url：有些平台首页在 Chromium 里
+        # 会触发文件下载，goto 会抛异常，用户看到的就只是一个空白窗口。
+        home = get_recipe(platform).login_entry()
         try:
             await driver.goto(home)
             session.message = f"已在可见窗口打开 {home}，请你自己完成登录或扫码。"

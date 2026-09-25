@@ -147,6 +147,9 @@ export default function BrowserTaskPage() {
     estimated_cost: task.model_usage?.estimated_cost ?? 0,
     errors: task.model_usage?.errors ?? [],
   };
+  // 没配模型 Key 时调用次数本来就是 0，这是正常状态而不是卡住。
+  // 个人浏览器版的取数走页面 DOM 规则，不依赖模型；配了模型只是多一层兜底。
+  const modelOff = task.model_configured === false;
 
   return (
     <div className="stack gap-24">
@@ -265,6 +268,12 @@ export default function BrowserTaskPage() {
             <Icon name="review" size={13} /> 模型调用 {usage.calls} 次
             {usage.vision_calls > 0 && `（其中视觉 ${usage.vision_calls} 次）`}
           </span>
+          {modelOff && usage.calls === 0 && (
+            <span>
+              未配置模型，取数走页面规则
+              <a href="#/browser/settings"> 去配置</a>
+            </span>
+          )}
           <span>
             估算费用 ¥{usage.estimated_cost.toFixed(4)}（仅为估算，不等于最终账单）
           </span>

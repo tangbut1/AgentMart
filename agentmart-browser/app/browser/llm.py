@@ -107,6 +107,17 @@ def _write_config(config: ModelConfig) -> None:
     os.replace(tmp, MODEL_CONFIG_PATH)
 
 
+def model_configured() -> bool:
+    """本机是否配了可用的模型（有 Key 且有 base_url）。
+
+    个人浏览器版的取数走确定性 DOM 规则，本来就不依赖模型；
+    配了只是让它在规则失败时多一次兜底。所以"没配"是正常状态，
+    不是错误 —— 界面要能据此把"模型调用 0 次"解释清楚。
+    """
+    config = load_config()
+    return bool(config.api_key and config.base_url and config.model)
+
+
 def load_config() -> ModelConfig:
     """读取本地模型配置；环境变量可覆盖（便于 CI/测试）。"""
     config = ModelConfig()
