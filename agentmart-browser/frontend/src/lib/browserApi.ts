@@ -206,6 +206,43 @@ export interface PolicyView {
   data_status: string;
 }
 
+export interface TrapView {
+  kind: string;
+  label: string;
+  /** blocker=买前必须先确认 major=明显影响决策 minor=值得知道 */
+  severity: "blocker" | "major" | "minor";
+  severity_label: string;
+  detail: string;
+  /** 页面原文；basis 为 not_shown 时为空 */
+  evidence: string;
+  /** 要用户自己回答的问题；basis 为 not_shown 时必填 */
+  question: string;
+  /** page_text=页面写了 not_shown=页面没写（不等于没有） */
+  basis: "page_text" | "not_shown";
+  basis_label: string;
+}
+
+export interface SubsidyScenarioView {
+  with_subsidy: string | null;
+  without_subsidy: string;
+  note: string;
+}
+
+export interface SubsidyView {
+  raw_text: string;
+  percent: string | null;
+  amount: string | null;
+  region_limit: string | null;
+  user_region: string | null;
+  fit: "region_matches" | "region_conflicts" | "unknown";
+  fit_label: string;
+  reason: string;
+  questions: string[];
+  /** user=用户自己填的收货地 page=商品页"配送至" */
+  region_source: "user" | "page";
+  scenarios: SubsidyScenarioView | null;
+}
+
 export interface OfferView {
   id: string;
   platform: BrowserPlatform;
@@ -222,6 +259,10 @@ export interface OfferView {
   shipping_fee: string;
   discounts: DiscountView[];
   policies: PolicyView[];
+  traps: TrapView[];
+  trap_summary: string;
+  worst_trap_severity: "blocker" | "major" | "minor" | null;
+  subsidy: SubsidyView | null;
   breakdown: BreakdownView;
   data_status: string;
   data_status_label: string;

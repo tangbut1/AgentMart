@@ -192,6 +192,19 @@ def classify_shop(shop_name: Optional[str], self_operated_hint: bool) -> Tuple[S
 
 # ─── 政策 ────────────────────────────────────────────────────────
 
+# 否定式退换限制。必须**先于**下面的肯定式模式判断：
+# "激活后不支持7天无理由"里同时含"激活"和"无理由"，如果按肯定式归类，
+# 用户会在「售后与保障」里看到一条看起来像保护的限制，正好被套路。
+_NO_RETURN_RESTRICTION_RE = re.compile(
+    r"不支持\s*(?:七天|7天)?\s*无理由"
+    r"|不可\s*(?:七天|7天)?\s*无理由"
+    r"|不退不换|不予退换|不支持退换"
+    r"|(?:激活|拆封|拆包|开机)[^。；，,\n]{0,10}"
+    r"(?:不支持|不可|不予|无法|不能)[^。；，,\n]{0,8}(?:退货|退款|退换|无理由)"
+    r"|(?:特价|清仓|尾货|处理品|样品|二手|翻新)[^。；，,\n]{0,12}"
+    r"(?:不退不换|不予退换|不支持|不可退|不可换|无法退|无法换)"
+)
+
 _POLICY_PATTERNS: List[Tuple[re.Pattern, PolicyCategory, PolicyScope]] = [
     (re.compile(r"7天|七天|无理由"), PolicyCategory.AFTER_SALES, PolicyScope.PRODUCT_PAGE_PROMISE),
     (re.compile(r"退换|退货|换货"), PolicyCategory.AFTER_SALES, PolicyScope.PRODUCT_PAGE_PROMISE),
@@ -207,19 +220,30 @@ def extract_policies(texts: List[str]) -> List[Policy]:
     seen = set()
     policies: List[Policy] = []
     for text in texts:
-        for pattern, category, scope in _POLICY_PATTERNS:
-            if pattern.search(text) and (category, text) not in seen:
-                seen.add((category, text))
-                policies.append(
-                    Policy(
-                        scope=scope,
-                        category=category,
-                        title=text[:40],
-                        summary=text[:200],
-                        data_status=DataStatus.REAL,
-                    )
-                )
-                break
+        # 否定式优先：同一条文案里"不支持无理由"和"无理由"都会命中，
+        # 归成限制才对用户有用。
+        if _NO_RETURN_RESTRICTION_RE.search(text):
+            category = PolicyCategory.RETURN_RESTRICTION
+        else:
+            category = None
+            for pattern, candidate, _scope in _POLICY_PATTERNS:
+                if pattern.search(text):
+                    category = candidate
+                    break
+            if category is None:
+                continue
+        if (category, text) in seen:
+            continue
+        seen.add((category, text))
+        policies.append(
+            Policy(
+                scope=PolicyScope.PRODUCT_PAGE_PROMISE,
+                category=category,
+                title=text[:40],
+                summary=text[:200],
+                data_status=DataStatus.REAL,
+            )
+        )
     return policies
 
 
@@ -239,6 +263,8 @@ class PageFields:
     sku_text: Optional[str] = None
     coupon_texts: List[str] = field(default_factory=list)
     policy_texts: List[str] = field(default_factory=list)
+    # 页面上"配送至"显示的收货地（登录账号的默认地址，未必是用户要的地址）
+    region_text: Optional[str] = None
     sales_text: Optional[str] = None
     evidence: Dict[str, str] = field(default_factory=dict)
     fetched_at: Optional[datetime] = None
@@ -255,6 +281,7 @@ class PageFields:
             sku_text=data.get("skuText"),
             coupon_texts=list(data.get("couponTexts") or []),
             policy_texts=list(data.get("policyTexts") or []),
+            region_text=data.get("regionText"),
             sales_text=data.get("salesText"),
             evidence=dict(data.get("evidence") or {}),
         )
@@ -366,6 +393,9 @@ def build_offer(
         shop_type=shop_type,
         sku_text=fields.sku_text,
         sales_text=fields.sales_text,
+        # 页面"配送至"的地址：登录账号的默认地址，不一定和用户要送的地方一致，
+        # 所以单独放着，不覆盖用户自己填的收货地。
+        region=fields.region_text,
         discounts=discounts,
         policies=policies,
         data_status=data_status,

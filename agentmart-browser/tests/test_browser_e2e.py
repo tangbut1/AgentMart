@@ -243,3 +243,91 @@ def test_user_takeover_resumes_pipeline_with_real_chromium(client):
 
         result = client.get(f"/api/browser/tasks/{task_id}/result").json()
         assert all(not offer["is_demo"] for g in result["groups"] for offer in g["offers"])
+
+
+def test_traps_and_subsidy_flow_through_real_chromium(client):
+    """真实浏览器里，防套路信号和补贴两套算法要能原样送到前端。
+
+    夹具里第三个商品故意写成"特价商品不支持7天无理由退货，不退不换"
+    且没有运费险 —— 低价来自坑，不是来自优惠。要验证的是：
+    1. 这条限制被识别出来，且带页面原文作证据；
+    2. "页面未显示"类的提示措辞是"未显示"，不是"不支持"；
+    3. 国补给出两个到手价，且都不被合并成一个数。
+    """
+    spec = FixtureSpec()
+    with FixtureServer(spec) as server:
+        base = server.base_url
+        service.agent.set_driver_factory(_playwright_factory(base))
+
+        created = client.post(
+            "/api/browser/tasks",
+            json={
+                # 用户自己说了收货地，用来比对补贴文案里的地区限制
+                "text": "预算 900 元买一件防雨透气的冲锋衣，配送至江苏省",
+                "platforms": ["jd"],
+                "options": {
+                    "max_candidates": 3,
+                    "ask_review_question": False,
+                    "origin": "test_fixture",
+                    "headless": True,
+                    "max_task_seconds": 120,
+                    "url_overrides": {
+                        "jd.home": f"{base}/jd/home.html",
+                        "jd.search": f"{base}/jd/search.html",
+                    },
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        client.post(f"/api/browser/tasks/{task_id}/start")
+        final = _wait_terminal(client, task_id, timeout=120)
+        assert final["summary_status"] == "completed", final["notes"]
+
+        result = client.get(f"/api/browser/tasks/{task_id}/result").json()
+        offers = [o for g in result["groups"] for o in g["offers"]]
+        assert len(offers) >= 2
+
+        by_title = {o["title"]: o for o in offers}
+        tricky = next(o for t, o in by_title.items() if "PELLIOT8823" in t)
+        clean = next(o for t, o in by_title.items() if "TAWJ91717" in t and "XL" in t)
+
+        # 1) 有页面证据的限制：特价不退不换，severity 是 major
+        special = next(
+            t for t in tricky["traps"] if t["kind"] == "special_no_return"
+        )
+        assert special["severity"] == "major"
+        assert special["basis"] == "page_text"
+        assert "不退不换" in special["evidence"]
+        assert special["question"]
+        assert "特价/清仓商品不退不换" in tricky["trap_summary"]
+        # 同一句证据只报最具体的那个，不重复报
+        assert not any(
+            t["kind"] == "no_return_window" and t["basis"] == "page_text"
+            for t in tricky["traps"]
+        )
+
+        # 2) 没看到运费险：措辞必须是"未显示"，不能讲成"不支持"
+        freight = next(
+            t for t in tricky["traps"] if t["kind"] == "no_freight_insurance"
+        )
+        assert freight["basis"] == "not_shown"
+        assert "不支持" not in freight["label"]
+        assert freight["question"]
+
+        # 3) 干净的那条不该被报成有不退不换
+        assert not any(t["kind"] == "special_no_return" for t in clean["traps"])
+        assert not any(t["kind"] == "no_return_window" for t in clean["traps"])
+
+        # 4) 国补：两个到手价都摆出来，不合并
+        subsidy = tricky["subsidy"] or clean["subsidy"]
+        assert subsidy is not None, "夹具里写了国补，这里必须出现"
+        assert subsidy["fit"] in ("region_matches", "region_conflicts", "unknown")
+        scenarios = subsidy["scenarios"]
+        if scenarios:
+            assert scenarios["without_subsidy"] and scenarios["with_subsidy"]
+            assert "不代您认定" in scenarios["note"]
+        # 补贴永远不进确定到手价
+        definite = float(clean["breakdown"]["definite_total"])
+        assert definite == float(clean["list_price"])
+

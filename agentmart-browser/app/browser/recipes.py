@@ -192,6 +192,19 @@ JS_PRODUCT_FIELDS = r"""
   // 7) 规格/SKU
   const sku = pick(['.sku', '[class*="sku"]', '[class*="spec"]', '[class*="selected"]']);
 
+  // 7b) 收货地：页面上"配送至"显示的是这个登录账号的默认地址。
+  // 它和用户自己填的收货地可能不是一处 —— 两处都交给上层比对，
+  // 不在这里替用户选一个。
+  const regionSel = document.querySelectorAll(
+    '[class*="region"], [class*="address"], [class*="location"], [class*="consignee"]'
+  );
+  let regionText = null;
+  for (const el of Array.from(regionSel).slice(0, 6)) {
+    const t = clean(el.innerText);
+    if (t && /配送至|收货地?|送至/.test(t)) { regionText = t; break; }
+  }
+  if (regionText) evidence['region'] = regionText;
+
   // 8) 销量：兼容"已售 1200 件"与"1200 人付款"两种语序
   const salesMatch = bodyText.match(
     /([0-9][0-9,\.万]*)\+?\s*(?:件已售|人付款|销量|已售)/
@@ -210,6 +223,7 @@ JS_PRODUCT_FIELDS = r"""
     skuText: sku || null,
     couponTexts: Array.from(new Set(couponTexts)).slice(0, 10),
     policyTexts: Array.from(new Set(policyTexts)).slice(0, 10),
+    regionText: regionText,
     salesText: sales,
     evidence,
     bodyTextSample: bodyText.slice(0, 600),

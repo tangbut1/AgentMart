@@ -85,6 +85,7 @@ class PolicyScope(str, Enum):
 
 class PolicyCategory(str, Enum):
     AFTER_SALES = "after_sales"    # 售后/退换
+    RETURN_RESTRICTION = "return_restriction"  # 退换限制（不支持/激活不退等否定式）
     WARRANTY = "warranty"          # 保修
     SHIPPING = "shipping"          # 发货/物流
     AUTHENTICITY = "authenticity"  # 正品保障

@@ -44,7 +44,7 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                     <th>确定到手</th>
                     <th>含待确认优惠</th>
                     <th>价格确定性</th>
-                    <th>售后</th>
+                    <th>售后 / 坑</th>
                     <th>读取时间</th>
                     <th>链接</th>
                   </tr>
@@ -73,10 +73,29 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                           {offer.certainty.label}
                         </Badge>
                       </td>
-                      <td className="small" data-label="售后">
-                        {offer.policies.length > 0
-                          ? offer.policies.map((p) => p.title).join("、")
-                          : "页面未显示"}
+                      <td className="small" data-label="售后/坑">
+                        {/* 限制和保障必须分开排：以前把"激活后不支持7天无理由"
+                            和"7天无理由"一列出来，用户根本分不清哪条是保护。 */}
+                        {offer.traps.filter((t) => t.severity !== "minor").length >
+                        0 && (
+                          <div className="row gap-4 wrap">
+                            {offer.traps
+                              .filter((t) => t.severity !== "minor")
+                              .map((trap, index) => (
+                                <Badge
+                                  key={`${trap.kind}-${index}`}
+                                  tone={trap.severity === "blocker" ? "danger" : "warn"}
+                                >
+                                  {trap.label}
+                                </Badge>
+                              ))}
+                          </div>
+                        )}
+                        <div className="muted">
+                          {offer.policies.length > 0
+                            ? offer.policies.map((p) => p.title).join("、")
+                            : "页面未显示保障信息"}
+                        </div>
                       </td>
                       <td className="small muted" data-label="读取时间">
                         {formatDateTime(offer.fetched_at)}

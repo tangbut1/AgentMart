@@ -1721,12 +1721,17 @@ class ShoppingAgent:
     # ---- 结果视图 ----
     def result_view(self, task: AgentTask) -> dict:
         """给前端的结构化结果：价格拆解、确定性、证据链接。"""
+        # 用户填写的收货地：只用来判断补贴文案里的地区限制对不对得上，
+        # 不替用户认定补贴资格。
+        user_region = (task.requirement.region or "").strip() or None
         groups = []
         for canonical in task.canonical:
             rows = []
             for offer in canonical.offers:
                 rows.append(
-                    serialize_offer(offer, compute_price_breakdown(offer))
+                    serialize_offer(
+                        offer, compute_price_breakdown(offer), user_region
+                    )
                 )
             groups.append(
                 {

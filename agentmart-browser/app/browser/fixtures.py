@@ -49,16 +49,20 @@ _JD_PRODUCT = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <div class="fixture-banner">本地测试夹具 · 虚构数据 · 不是真实平台报价</div>
 <div class="shop-name">{shop}</div>
 <div class="price">¥{price}</div>
-<div class="sku">颜色：{color}；尺码：{size}</div>
+<div class="sku">颜色：{color}；尺码：{size}{version_note}</div>
 {coupons}
 <div class="promotion">限时直降 50 元</div>
-<div class="policy">7天无理由退货</div>
-<div class="policy">全国联保，一年保修</div>
-<div class="policy">满 99 元包邮</div>
-<div class="policy">假一赔十</div>
+{policies}
 <div class="sales">{sales}</div>
 <div class="region">配送至：{region}</div>
 </body></html>"""
+
+_DEFAULT_POLICIES = (
+    "7天无理由退货",
+    "全国联保，一年保修",
+    "满 99 元包邮",
+    "假一赔十",
+)
 
 # 安全验证页：和真实平台一样，页面自己轮询验证状态，通过后跳回原页面。
 # 这一跳很关键 —— 用户处理完验证，是平台把当前标签页送走的，
@@ -95,6 +99,10 @@ class FixtureProduct:
     shop: str = "示例官方旗舰店"
     sales: str = "已售 1200 件"
     coupons: tuple = ("满 1000 减 100 元店铺券（已领取，可用）", "国补 15%（需本人资格核实）")
+    # 政策栏文案。默认给一套"保护齐全"的；要造坑就换掉它。
+    policies: tuple = _DEFAULT_POLICIES
+    # 规格里的版本说明，用来造"港版/非国行"这类只在规格里出现的坑
+    version_note: str = ""
 
 
 @dataclass
@@ -127,6 +135,14 @@ class FixtureSpec:
             shop="另一示例旗舰店",
             sales="已售 3400 件",
             coupons=("满 400 减 30 元店铺券（去领取）",),
+            # 造一个"低价来自坑"的样本：不支持7天无理由、没有运费险，
+            # 优惠券还要自己去领。和前两条放一起正好看出差别。
+            policies=(
+                "特价商品不支持7天无理由退货，不退不换",
+                "全国联保，一年保修",
+                "满 99 元包邮",
+                "假一赔十",
+            ),
         ),
     )
     region: str = "北京市"
@@ -201,8 +217,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     shop=item.shop,
                     color=item.color,
                     size=item.size,
+                    version_note=f"；{item.version_note}" if item.version_note else "",
                     sales=item.sales,
                     coupons=coupons,
+                    policies="".join(
+                        f'<div class="policy">{text}</div>' for text in item.policies
+                    ),
                     region=spec.region,
                 )
             )

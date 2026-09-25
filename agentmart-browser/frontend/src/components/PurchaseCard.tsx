@@ -8,10 +8,23 @@ const CONDITION_TONE: Record<string, "ok" | "warn" | "danger"> = {
   unverifiable: "danger",
 };
 
+// 防套路：买前必须先确认的用 danger，明显影响决策的用 warn，
+// 页面没显示的（那只是"没看到"）用 muted —— 视觉上就要分出
+// "页面写了"和"页面没写"两种证据强度。
+const TRAP_SEVERITY_TONE: Record<string, "danger" | "warn" | "muted"> = {
+  blocker: "danger",
+  major: "warn",
+  minor: "muted",
+};
+
 export default function PurchaseCard({ offer }: { offer: OfferView }) {
   const { breakdown, certainty } = offer;
   const definite = Number(breakdown.definite_total || 0);
   const potential = Number(breakdown.potential_total || 0);
+  const traps = offer.traps ?? [];
+  const stated = traps.filter((t) => t.basis === "page_text");
+  const notShown = traps.filter((t) => t.basis !== "page_text");
+  const scenarios = offer.subsidy?.scenarios;
 
   return (
     <article className="purchase-card">
@@ -116,6 +129,92 @@ export default function PurchaseCard({ offer }: { offer: OfferView }) {
             ))}
           </ul>
         </div>
+      )}
+
+      {stated.length > 0 && (
+        <Notice
+          tone={offer.worst_trap_severity === "blocker" ? "danger" : "warn"}
+          title="防套路：页面写明的限制"
+        >
+          <div className="small muted">
+            以下都是商品页上的原文，不是推测。价格低往往正是低在这里。
+          </div>
+          <ul className="stack gap-8 mt-8">
+            {stated.map((trap, index) => (
+              <li key={`${trap.kind}-${index}`} className="stack gap-4">
+                <div className="row gap-8 wrap">
+                  <Badge tone={TRAP_SEVERITY_TONE[trap.severity] ?? "muted"} dot>
+                    {trap.severity_label}
+                  </Badge>
+                  <strong>{trap.label}</strong>
+                </div>
+                <div className="small">{trap.detail}</div>
+                {trap.evidence && (
+                  <div className="small muted">页面原文：「{trap.evidence}」</div>
+                )}
+                {trap.question && (
+                  <div className="small">
+                    <Icon name="review" size={13} /> 要你确认：{trap.question}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      )}
+
+      {notShown.length > 0 && (
+        <details>
+          <summary className="small muted">
+            页面没写、需要你自己确认的事（{notShown.length}）
+          </summary>
+          <div className="small muted mt-8">
+            下面是"没看到"，不等于"没有"。下单前在商品页核对一下。
+          </div>
+          <ul className="small stack gap-4 mt-8">
+            {notShown.map((trap, index) => (
+              <li key={`${trap.kind}-${index}`}>
+                <strong>{trap.label}</strong> — {trap.detail}
+                {trap.question && <div className="muted">{trap.question}</div>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {offer.subsidy && (
+        <Notice tone="warn" title="补贴：两种情形都算给你看">
+          <div className="small">
+            {offer.subsidy.reason}
+            {offer.subsidy.region_source === "page" && (
+              <span className="muted">
+                （收货地取自商品页"配送至"，不是你自己填的）
+              </span>
+            )}
+          </div>
+          {scenarios && (
+            <div className="row gap-16 wrap mt-8">
+              <div>
+                <div className="small muted">确定要付</div>
+                <PriceFigure value={Number(scenarios.without_subsidy)} />
+              </div>
+              <div>
+                <div className="small muted">仅当你符合补贴资格</div>
+                <PriceFigure value={Number(scenarios.with_subsidy ?? 0)} />
+              </div>
+            </div>
+          )}
+          <div className="small muted mt-8">{scenarios?.note}</div>
+          {offer.subsidy.questions.length > 0 && (
+            <ul className="small stack gap-4 mt-8">
+              {offer.subsidy.questions.map((question) => (
+                <li key={question}>
+                  <Icon name="review" size={13} /> {question}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Notice>
       )}
 
       {offer.policies.length > 0 && (

@@ -6,10 +6,18 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from ..domain.enums import ConditionKind, DataStatus, PolicyCategory, PolicyScope
+from ..domain.enums import (
+    ConditionKind,
+    DataStatus,
+    DiscountKind,
+    PolicyCategory,
+    PolicyScope,
+)
 from ..domain.models import Discount, Offer, Policy, PriceBreakdown, PriceLine, Recommendation
+from ..domain.subsidy import interpret_subsidy_text, subsidy_scenarios
+from ..domain.traps import detect_traps, summarize_traps, worst_severity
 from .enums import PriceCertainty
 
 _CERTAINTY_ORDER = [
@@ -132,6 +140,7 @@ def _scope_label(scope: PolicyScope) -> str:
 def _category_label(category: PolicyCategory) -> str:
     return {
         PolicyCategory.AFTER_SALES: "售后/退换",
+        PolicyCategory.RETURN_RESTRICTION: "退换限制",
         PolicyCategory.WARRANTY: "保修",
         PolicyCategory.SHIPPING: "发货/物流",
         PolicyCategory.AUTHENTICITY: "正品保障",
@@ -140,8 +149,41 @@ def _category_label(category: PolicyCategory) -> str:
     }[category]
 
 
-def offer(offer: Offer, breakdown: PriceBreakdown) -> Dict[str, Any]:
-    """一张购买卡片需要的全部字段。"""
+def offer(
+    offer: Offer, breakdown: PriceBreakdown, user_region: Optional[str] = None
+) -> Dict[str, Any]:
+    """一张购买卡片需要的全部字段。
+
+    ``user_region`` 是用户自己填写的收货地，只用于判断补贴文案里写明的
+    地区限制和它对不对得上 —— 不替用户认定补贴资格。
+    """
+    traps = detect_traps(
+        [p.title for p in offer.policies],
+        [d.label for d in offer.discounts],
+        sku_text=offer.sku_text or "",
+        title=offer.title,
+        source_url=offer.source_url or offer.url,
+    )
+    subsidy = None
+    # 收货地优先用用户自己填的；没填才退到页面"配送至"，并且标明出处 ——
+    # 那个地址是登录账号的默认地址，未必是用户真正要送的地方。
+    region = (user_region or "").strip() or None
+    region_source = "user"
+    if not region and (offer.region or "").strip():
+        region = offer.region.strip()
+        region_source = "page"
+    for entry in offer.discounts:
+        if entry.kind is not DiscountKind.SUBSIDY:
+            continue
+        reading = interpret_subsidy_text(entry.label, region)
+        if reading is not None:
+            subsidy = reading.to_dict()
+            subsidy["region_source"] = region_source
+            scenarios = subsidy_scenarios(
+                Decimal(str(breakdown.definite_total)), reading
+            )
+            subsidy["scenarios"] = scenarios.to_dict() if scenarios else None
+            break
     return {
         "id": offer.id,
         "platform": offer.platform.value,
@@ -158,6 +200,12 @@ def offer(offer: Offer, breakdown: PriceBreakdown) -> Dict[str, Any]:
         "shipping_fee": money(offer.shipping_fee),
         "discounts": [discount(d) for d in offer.discounts],
         "policies": [policy(p) for p in offer.policies],
+        "traps": [t.to_dict() for t in traps],
+        "trap_summary": summarize_traps(traps),
+        "worst_trap_severity": (
+            worst_severity(traps).value if worst_severity(traps) else None
+        ),
+        "subsidy": subsidy,
         "breakdown": breakdown_dict(breakdown),
         "data_status": offer.data_status.value,
         "data_status_label": offer.data_status.label,
