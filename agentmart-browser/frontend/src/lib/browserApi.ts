@@ -114,6 +114,8 @@ export interface TaskOptions {
   origin_label: string;
   url_overrides: Record<string, string>;
   ask_review_question: boolean;
+  direct_links: Record<string, string[]>;
+  expand_from_primary: boolean;
 }
 
 export interface TaskView {
@@ -409,6 +411,15 @@ export class BrowserApiError extends Error {
 
 const BASE = "/api/browser";
 
+/** /parse-links 的返回：认出了几条链接、各平台几条、有哪些问题 */
+export interface LinkPreview {
+  total: number;
+  usable: number;
+  by_platform: Record<string, number>;
+  problems: string[];
+  links: { url: string; platform: string | null }[];
+}
+
 export const browserApi = {
   mode(signal?: AbortSignal) {
     return request<ModeInfo>(`${BASE}/mode`, { signal });
@@ -474,6 +485,13 @@ export const browserApi = {
     return request<Requirement & { needs_followup: boolean }>(`${BASE}/parse`, {
       method: "POST",
       body: JSON.stringify({ text }),
+    });
+  },
+
+  parseLinks(raw: string | string[]) {
+    return request<LinkPreview>(`${BASE}/parse-links`, {
+      method: "POST",
+      body: JSON.stringify({ links: raw }),
     });
   },
 

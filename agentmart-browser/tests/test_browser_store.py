@@ -176,6 +176,8 @@ def test_only_allowlisted_endpoints_can_change_state(client):
         ("/api/browser/model", "delete"),
         ("/api/browser/model/test", "post"),
         ("/api/browser/parse", "post"),
+        # 链接/口令解析：和 /parse 一样只做字符串解析，不开券、不加购、不下单
+        ("/api/browser/parse-links", "post"),
         ("/api/browser/platforms/{group}/clear", "post"),
         # 登录窗口：只是弹出一个用户可见的浏览器让人自己登录，
         # 不开券、不加购、不下单、不付款，因此登记为允许的写接口

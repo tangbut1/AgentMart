@@ -187,6 +187,10 @@ class BrowserService:
         data["needs_followup"] = bool(requirement.unclear)
         return data
 
+    def parse_links(self, raw: Any) -> Dict[str, Any]:
+        """给前端的链接解析预览：认出了几条、各平台几条、哪里有问题。"""
+        return parse_links_preview(raw)
+
     # ---- 任务 ----
     async def create_task(
         self,
@@ -217,6 +221,19 @@ class BrowserService:
                 task_options.url_overrides = dict(options["url_overrides"])
             if "ask_review_question" in options:
                 task_options.ask_review_question = bool(options["ask_review_question"])
+            if "expand_from_primary" in options:
+                task_options.expand_from_primary = bool(options["expand_from_primary"])
+            # 用户直接提供的商品链接：解析后按平台分组。
+            # 解析失败不静默丢弃 —— 原样带出去，让调用方告诉用户哪里不对。
+            raw_links = options.get("direct_links")
+            if raw_links:
+                task_options.direct_links = _parse_direct_links(raw_links)
+                if not task_options.direct_links:
+                    preview = parse_links_preview(raw_links)
+                    detail = "；".join(preview["problems"]) or "没有识别出可用的商品链接"
+                    raise ValueError(
+                        f"没能从您粘贴的内容里识别出商品链接：{detail}"
+                    )
         task = self.agent.create_task(requirement, task_options)
         if session is not None:
             await store.save_task(session, task)
@@ -328,6 +345,44 @@ class BrowserService:
         except RuntimeError:
             return
         loop.create_task(self.agent.close_all_sessions())
+
+
+def _parse_direct_links(raw: Any) -> Dict[Platform, List[str]]:
+    """把用户粘贴的链接/口令文本解析成按平台分组的链接表。
+
+    ``raw`` 可以是一段文本（含一条或多条链接、淘口令），也可以是字符串
+    数组（前端已经按行拆好的多条链接）。
+    """
+    from .itemlinks import group_links_by_platform, parse_user_input
+
+    if isinstance(raw, str):
+        texts = [raw]
+    elif isinstance(raw, (list, tuple)):
+        texts = [str(item) for item in raw]
+    else:
+        raise ValueError("direct_links 只能是文本或文本数组")
+
+    grouped: Dict[Platform, List[str]] = {}
+    for text in texts:
+        for platform, urls in group_links_by_platform(parse_user_input(text)).items():
+            bucket = grouped.setdefault(platform, [])
+            for url in urls:
+                if url not in bucket:
+                    bucket.append(url)
+    return grouped
+
+
+def parse_links_preview(raw: Any) -> Dict[str, Any]:
+    """给前端的链接解析预览：认出了几条、各平台几条、哪里有问题。"""
+    from .itemlinks import parse_user_input, summarize
+
+    if isinstance(raw, (list, tuple)):
+        parses = []
+        for item in raw:
+            parses.extend(parse_user_input(str(item)))
+    else:
+        parses = parse_user_input(str(raw or ""))
+    return summarize(parses)
 
 
 def recipe_summary(platform: Platform) -> Dict[str, Any]:

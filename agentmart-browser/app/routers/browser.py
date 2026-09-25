@@ -91,6 +91,19 @@ async def parse_requirement(payload: Dict[str, Any] = Body(...)) -> Dict[str, An
     return service.parse(text)
 
 
+@router.post("/parse-links", summary="解析商品链接/分享口令")
+async def parse_links(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """把用户粘贴的链接/口令文本解析成按平台分组的商品链接。
+
+    只做确定性识别：认得出平台才认，认不出就如实说明缺什么
+    （比如只有淘口令口令码、没有可打开的链接）。
+    """
+    raw = payload.get("links", payload.get("text"))
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raise HTTPException(status_code=422, detail="请粘贴商品链接或分享口令")
+    return service.parse_links(raw)
+
+
 @router.post("/tasks", summary="创建购物任务")
 async def create_task(
     payload: Dict[str, Any] = Body(...),
@@ -98,14 +111,15 @@ async def create_task(
 ) -> Dict[str, Any]:
     text = str(payload.get("text") or "").strip()
     fields = payload.get("fields")
-    if not text and not fields:
+    options = payload.get("options") or {}
+    has_links = bool(options.get("direct_links")) if isinstance(options, dict) else False
+    if not text and not fields and not has_links:
         raise HTTPException(
             status_code=422, detail="请填写商品名称，或用一句话描述你想买什么"
         )
     if fields is not None and not isinstance(fields, dict):
         raise HTTPException(status_code=422, detail="fields 必须是对象")
     platforms = payload.get("platforms")
-    options = payload.get("options") or {}
     try:
         return await service.create_task(
             text, platforms=platforms, options=options, fields=fields, session=session

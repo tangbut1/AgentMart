@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
-import { browserApi, type Requirement } from "../lib/browserApi";
+import {
+  browserApi,
+  type BrowserPlatform,
+  type LinkPreview,
+  type Requirement,
+} from "../lib/browserApi";
+import { PLATFORM_LABEL } from "../lib/format";
 import { Notice } from "./ui";
 
 /**
@@ -28,6 +34,10 @@ export interface RequirementDraft {
   text: string;
   /** 结构化字段，最终以它为准 */
   fields: RequirementFields;
+  /** 用户粘贴的商品链接 / 分享口令原文 */
+  links: string;
+  /** 只贴了部分平台时，是否去其它平台搜同款 */
+  expandFromPrimary: boolean;
 }
 
 export const EMPTY_FIELDS: RequirementFields = {
@@ -39,6 +49,13 @@ export const EMPTY_FIELDS: RequirementFields = {
   brands: "",
   region: "",
   scenarios: [],
+};
+
+export const EMPTY_DRAFT: RequirementDraft = {
+  text: "",
+  fields: EMPTY_FIELDS,
+  links: "",
+  expandFromPrimary: true,
 };
 
 export function toDraftPayload(draft: RequirementDraft) {
@@ -55,7 +72,12 @@ export function toDraftPayload(draft: RequirementDraft) {
   if (f.budget_min.trim() || f.budget_max.trim()) {
     fields.budget_approximate = f.budget_approximate;
   }
-  return { text: draft.text.trim(), fields };
+  return {
+    text: draft.text.trim(),
+    fields,
+    links: draft.links.trim(),
+    expandFromPrimary: draft.expandFromPrimary,
+  };
 }
 
 const CATEGORIES = [
@@ -77,7 +99,7 @@ const SCENARIO_OPTIONS = [
   "防水", "防雨", "防晒", "透气", "保暖", "轻薄", "静音", "护眼",
 ];
 
-type Mode = "form" | "text";
+type Mode = "links" | "form" | "text";
 
 const EXAMPLES = [
   "预算 500～800 元，买一件适合日常通勤和轻度徒步的冲锋衣，重视防雨和透气",
@@ -85,7 +107,13 @@ const EXAMPLES = [
   "索尼 WH-1000XM5，预算 2500 元，只算平台标价和店铺券，不要会员方案",
 ];
 
-function describe(f: RequirementFields): string[] {
+const LINK_EXAMPLES = [
+  "https://item.jd.com/100012043978.html",
+  "https://detail.tmall.com/item.htm?id=123456",
+  "https://mobile.yangkeduo.com/goods.html?goods_id=123456",
+];
+
+function describeFields(f: RequirementFields): string[] {
   const parts: string[] = [];
   if (f.keyword.trim()) parts.push(`搜索词「${f.keyword.trim()}」`);
   if (f.category.trim()) parts.push(`品类 ${f.category.trim()}`);
@@ -98,6 +126,26 @@ function describe(f: RequirementFields): string[] {
   if (f.brands.trim()) parts.push(`品牌 ${f.brands.trim()}`);
   if (f.region.trim()) parts.push(`配送至${f.region.trim()}`);
   if (f.scenarios.length) parts.push(`在意 ${f.scenarios.join("、")}`);
+  return parts;
+}
+
+function describeLinks(
+  links: string,
+  preview: LinkPreview | null,
+  expand: boolean,
+): string[] {
+  if (!links.trim()) return [];
+  if (!preview) return ["正在识别您粘贴的链接…"];
+  const parts: string[] = [];
+  if (preview.usable > 0) {
+    const byPlatform = Object.entries(preview.by_platform)
+      .map(([p, n]) => `${PLATFORM_LABEL[p as BrowserPlatform] ?? p} ${n} 条`)
+      .join("、");
+    parts.push(`直接用您给的 ${preview.usable} 条商品链接比价（${byPlatform}）`);
+    if (expand) parts.push("其余平台按主链接型号搜同款");
+  } else {
+    parts.push("还没有识别出可用的商品链接");
+  }
   return parts;
 }
 
@@ -121,15 +169,27 @@ interface Props {
 }
 
 export function RequirementForm({ draft, onChange, disabled }: Props) {
-  const [mode, setMode] = useState<Mode>("form");
+  const [mode, setMode] = useState<Mode>("links");
   const [parsing, setParsing] = useState(false);
   const [parseNote, setParseNote] = useState<string | null>(null);
+  const [linkPreview, setLinkPreview] = useState<LinkPreview | null>(null);
   const f = draft.fields;
-  const preview = useMemo(() => describe(f), [f]);
+  const preview = useMemo(
+    () => [
+      ...describeLinks(draft.links, linkPreview, draft.expandFromPrimary),
+      ...describeFields(f),
+    ],
+    [draft.links, draft.expandFromPrimary, linkPreview, f],
+  );
 
   const patch = useCallback(
     (next: Partial<RequirementFields>) => onChange({ ...draft, fields: { ...f, ...next } }),
     [draft, f, onChange],
+  );
+
+  const patchDraft = useCallback(
+    (next: Partial<RequirementDraft>) => onChange({ ...draft, ...next }),
+    [draft, onChange],
   );
 
   const toggleScenario = useCallback(
@@ -140,6 +200,29 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
           : [...f.scenarios, word],
       }),
     [f.scenarios, patch],
+  );
+
+  // 粘贴即识别：用户每敲一下就问一次服务端，认出几条、哪个平台、
+  // 哪里有问题，全部摆在明处 —— 链接认错了平台是最容易白跑一趟的事。
+  const identifyLinks = useCallback(
+    async (raw: string) => {
+      if (!raw.trim()) {
+        setLinkPreview(null);
+        setParseNote(null);
+        return;
+      }
+      setParsing(true);
+      try {
+        setLinkPreview(await browserApi.parseLinks(raw));
+        setParseNote(null);
+      } catch (exc) {
+        setLinkPreview(null);
+        setParseNote(exc instanceof Error ? exc.message : "链接识别失败");
+      } finally {
+        setParsing(false);
+      }
+    },
+    [],
   );
 
   const prefillFromText = useCallback(async () => {
@@ -153,6 +236,7 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
     try {
       const parsed = await browserApi.parse(text);
       onChange({
+        ...draft,
         text,
         fields: { ...EMPTY_FIELDS, ...fieldsFromRequirement(parsed) },
       });
@@ -167,18 +251,26 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
     } finally {
       setParsing(false);
     }
-  }, [draft.text, onChange]);
+  }, [draft, onChange]);
 
   return (
     <div className="stack gap-16">
       <div className="row gap-8 wrap" style={{ alignItems: "center" }}>
         <button
           type="button"
+          className={`chip${mode === "links" ? " chip--accent" : ""}`}
+          aria-pressed={mode === "links"}
+          onClick={() => setMode("links")}
+        >
+          商品链接 / 口令（推荐）
+        </button>
+        <button
+          type="button"
           className={`chip${mode === "form" ? " chip--accent" : ""}`}
           aria-pressed={mode === "form"}
           onClick={() => setMode("form")}
         >
-          填表（推荐）
+          填表搜关键词
         </button>
         <button
           type="button"
@@ -188,12 +280,102 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
         >
           写一句话
         </button>
-        <span className="field__hint" style={{ marginLeft: "auto" }}>
-          填表最稳：数字是你自己敲的，不会被猜错
-        </span>
       </div>
 
-      {mode === "text" ? (
+      {mode === "links" ? (
+        <div className="stack gap-12">
+          <div className="field">
+            <label className="field__label" htmlFor="req-links">
+              粘贴商品链接或分享口令（可多条）
+            </label>
+            <textarea
+              id="req-links"
+              className="textarea"
+              rows={5}
+              disabled={disabled}
+              value={draft.links}
+              placeholder={
+                "在京东/淘宝/天猫/拼多多/抖音商城的商品页点「分享 → 复制链接」，贴到这里。\n" +
+                "例如：\nhttps://item.jd.com/100012043978.html\nhttps://detail.tmall.com/item.htm?id=123456"
+              }
+              onChange={(e) => {
+                patchDraft({ links: e.target.value });
+                void identifyLinks(e.target.value);
+              }}
+            />
+            <div className="field__hint">
+              直接打开商品详情页取数，<strong>不经过平台搜索列表页</strong>
+              —— 搜索页是各平台反爬最厚的一层，商品详情页为了能被人分享和搜到，
+              基本是公开可读的。口令（¥…¥）里带的链接一样认。
+            </div>
+          </div>
+
+          {parsing && <p className="muted small">正在识别链接…</p>}
+
+          {linkPreview && linkPreview.usable > 0 && (
+            <Notice tone="ok" title={`识别出 ${linkPreview.usable} 条商品链接`}>
+              <ul className="stack gap-4" style={{ margin: 0, paddingLeft: 18 }}>
+                {linkPreview.links.map((link) => (
+                  <li key={link.url} className="small">
+                    <strong>{PLATFORM_LABEL[link.platform as BrowserPlatform] ?? "未知平台"}</strong>
+                    <span className="mono"> {link.url}</span>
+                  </li>
+                ))}
+              </ul>
+            </Notice>
+          )}
+
+          {linkPreview && linkPreview.problems.length > 0 && (
+            <Notice tone="warn" title="这些内容没能用上">
+              <ul className="stack gap-4" style={{ margin: 0, paddingLeft: 18 }}>
+                {linkPreview.problems.map((problem, index) => (
+                  <li key={`${problem}-${index}`} className="small">
+                    {problem}
+                  </li>
+                ))}
+              </ul>
+            </Notice>
+          )}
+
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              disabled={disabled}
+              checked={draft.expandFromPrimary}
+              onChange={(e) => patchDraft({ expandFromPrimary: e.target.checked })}
+            />
+            只贴了部分平台时，去其它平台搜同款
+          </label>
+          <div className="field__hint">
+            勾选后：只贴了京东链接，我也会打开京东这条链接读出精确品牌型号
+            （例如「索尼 WH-1000XM5」），再拿这个型号去淘宝/天猫/拼多多/抖音精准搜同款。
+            提取不出明确型号时不会瞎搜，会直接告诉您缺什么。
+            不勾选就只对比您贴出来的这几条。
+          </div>
+
+          <div className="row gap-8 wrap">
+            {LINK_EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className="btn btn--ghost btn--sm"
+                disabled={disabled}
+                onClick={() => {
+                  patchDraft({ links: example });
+                  void identifyLinks(example);
+                }}
+              >
+                {example.length > 28 ? `${example.slice(0, 28)}…` : example}
+              </button>
+            ))}
+          </div>
+
+          <Notice tone="info" title="比价只读，不会代您操作">
+            我只打开商品页读取页面上的价格、优惠和售后政策，不领券、不加购、不下单、不付款。
+            账号密码由您本人在登录窗口里输入。
+          </Notice>
+        </div>
+      ) : mode === "text" ? (
         <div className="stack gap-12">
           <div className="field">
             <label className="field__label" htmlFor="req-text">
@@ -408,7 +590,7 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
             </div>
           )}
 
-          {draft.text.trim() && (
+          {draft.text.trim() && mode === "form" && (
             <Notice tone="info" title="同时保留了你写的原话">
               {draft.text.trim()}
             </Notice>
@@ -424,7 +606,7 @@ export function RequirementForm({ draft, onChange, disabled }: Props) {
           </p>
         ) : (
           <p className="muted small" style={{ margin: 0 }}>
-            还没有填任何条件。至少填一个「要买什么」。
+            还没有填任何条件。至少贴一条商品链接，或者填一个「要买什么」。
           </p>
         )}
       </div>

@@ -226,6 +226,110 @@ def extract_signature(title: str, brand_hint: Optional[str] = None) -> ModelSign
     return sig
 
 
+def brand_as_written(text: str) -> str:
+    """返回品牌在标题里的原始写法（"索尼"而不是归一后的 "Sony"）。
+
+    跨平台搜同款时用原标题里的写法：中文平台搜「索尼 WH-1000XM5」比搜
+    「Sony WH-1000XM5」命中的同款更多。
+    """
+    best = ""
+    best_at = len(text) + 1
+    for brand in KNOWN_BRANDS:
+        match = re.search(re.escape(brand), text, re.IGNORECASE)
+        if match and match.start() < best_at:
+            best, best_at = match.group(0), match.start()
+    return best
+
+
+# 型号后面的档位词：Pro/Max 和标准版是不同 SKU、不同价，必须一起搜。
+_SERIES_SUFFIX_RE = re.compile(r"\b(Pro|Max|Plus|Ultra|Air|Mini|Lite|SE|Note|GT)\b", re.I)
+
+# 「单词 + 数字」型号（iPhone 15 / Galaxy S24 的 S24 由 _TOKEN_RE 捕获）。
+# 数字后面不能紧跟小数或计量单位：MacBook Air「13.6英寸」是屏幕尺寸不是型号。
+_WORD_NUM_MODEL_RE = re.compile(
+    r"\b([A-Za-z]{2,}|[A-Za-z]\d)\s+(\d{1,4}[A-Za-z]{0,6})"
+    r"(?!\.\d)(?!\s*(?:英寸|寸|厘米|米|毫米|mm|cm|kg|克|瓦|w|wh|小时|分钟|年|月|日|款|代|核|hz|bit))\b",
+    re.IGNORECASE,
+)
+
+# 短型号（X1 / M2 / S9）。字母开头、带数字、不超过 6 位。
+# 边界用 (?<![A-Za-z0-9]) 而不是 \b：\b 把中文也算词内字符，
+# "M2芯片" 这种紧贴中文的型号会整个匹配不上。
+_SHORT_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{1,2}\d[A-Za-z0-9]*)(?![A-Za-z0-9])")
+# 这些是参数不是型号：网络制式、分辨率、接口。
+_NON_MODEL_TOKENS = {
+    "3G", "4G", "5G", "2G", "2K", "4K", "8K", "1080P", "720P", "HDR", "LED",
+    "LCD", "OLED", "USB", "HDMI", "WIFI", "TYPE", "PD", "QC", "A4", "B5", "A3",
+}
+
+
+def _series_suffix(text: str, start: int) -> str:
+    """取型号后面紧跟的档位词（最多两个），如 "15 Pro Max" 的 "Pro Max"。"""
+    picked: List[str] = []
+    for word in text[start:].split():
+        if len(picked) == 2 or not _SERIES_SUFFIX_RE.fullmatch(word):
+            break
+        picked.append(word)
+    return " " + " ".join(picked) if picked else ""
+
+
+def search_keyword_from_title(title: str, *, max_tokens: int = 2) -> str:
+    """从商品标题提炼「品牌 + 型号 + 容量」，作为跨平台搜同款的关键词。
+
+    只保留能唯一定位同一 SKU 的信息。颜色/套装/成色刻意不加进关键词：
+    加多了会把同款的其它配色搜丢，而错配的风险由 ``group_offers`` 的
+    签名比对兜底，那边发现规格不符会明确告知而不是硬合组。
+
+    型号保留标题里的原始写法（大小写、连字符原样）——搜「WH-1000XM5」
+    比搜归一后的「WH1000XM5」准得多。
+
+    提炼不出品牌以外的区分信息时返回空串：只拿一个品牌名去搜，搜回来
+    的是一整页不相关商品，硬拿它们比价会误导人。
+    """
+    text = (title or "").strip()
+    if not text:
+        return ""
+    sig = extract_signature(text)
+    brand = brand_as_written(text) or sig.brand or ""
+
+    without_storage = _STORAGE_RE.sub(" ", text)
+    wanted = {token.upper() for token in sig.model_tokens}
+    found: List[str] = []
+    for match in _TOKEN_RE.finditer(without_storage):
+        raw = match.group(0)
+        # 紧跟在数字后面的字母数字串基本是芯片/参数名（骁龙8Gen2），不是型号
+        if match.start() > 0 and text[match.start() - 1].isdigit():
+            continue
+        if re.sub(r"[^A-Za-z0-9]", "", raw).upper() in wanted and raw not in found:
+            found.append(raw)
+
+    if not found:
+        for match in _WORD_NUM_MODEL_RE.finditer(without_storage):
+            raw = match.group(0) + _series_suffix(without_storage, match.end())
+            if raw not in found:
+                found.append(raw)
+
+    if not found:
+        # 最后才放宽到短型号（X1 / M2）。这类串太容易撞上参数名，
+        # 所以只在不带单位、且不在参数黑名单里时才认。
+        for match in _SHORT_TOKEN_RE.finditer(without_storage):
+            raw = match.group(1)
+            upper = raw.upper()
+            if upper in _NON_MODEL_TOKENS or len(upper) > 6:
+                continue
+            if match.start() > 0 and text[match.start() - 1].isdigit():
+                continue
+            if raw not in found:
+                found.append(raw)
+    found.sort(key=len, reverse=True)
+    found = found[:max_tokens]
+
+    if not found and not sig.storage:
+        return ""
+    parts = ([brand] if brand else []) + found + ([sig.storage] if sig.storage else [])
+    return " ".join(part for part in parts if part).strip()
+
+
 # ─── 匹配 ──────────────────────────────────────────────────────
 
 _HARD_FIELDS = ("version", "condition", "bundle")

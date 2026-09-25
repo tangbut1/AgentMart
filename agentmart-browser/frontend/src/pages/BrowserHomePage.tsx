@@ -10,7 +10,7 @@ import {
 import { PLATFORM_LABEL } from "../lib/format";
 import { Badge, Icon, Notice, Segmented, type BadgeTone } from "../components/ui";
 import {
-  EMPTY_FIELDS,
+  EMPTY_DRAFT,
   RequirementForm,
   toDraftPayload,
   type RequirementDraft,
@@ -32,10 +32,7 @@ function loginTone(state?: string): BadgeTone {
 export default function BrowserHomePage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("browser");
-  const [draft, setDraft] = useState<RequirementDraft>({
-    text: "",
-    fields: EMPTY_FIELDS,
-  });
+  const [draft, setDraft] = useState<RequirementDraft>(EMPTY_DRAFT);
   const [platforms, setPlatforms] = useState<BrowserPlatform[]>(ALL_PLATFORMS);
   const [maxCandidates, setMaxCandidates] = useState(6);
   const [info, setInfo] = useState<ModeInfo | null>(null);
@@ -120,11 +117,13 @@ export default function BrowserHomePage() {
 
   const start = useCallback(async () => {
     const payload = toDraftPayload(draft);
-    if (!payload.text && !payload.fields.keyword) {
-      setError("请先填「要买什么」，或者用一句话描述");
+    // 两条入口：贴了商品链接就走「链接直连」，否则必须有搜索词。
+    // 关键词模式下没填词就不能开始 —— 空词搜回来的是平台首页推荐，不是商品。
+    if (!payload.links && !payload.fields.keyword) {
+      setError("请先贴一条商品链接，或者填「要买什么」");
       return;
     }
-    if (!payload.fields.keyword) {
+    if (!payload.links && !payload.text) {
       setError("请填写「要买什么」——这是实际拿去各平台搜索的词");
       return;
     }
@@ -139,7 +138,15 @@ export default function BrowserHomePage() {
         text: payload.text,
         fields: payload.fields,
         platforms,
-        options: { max_candidates: maxCandidates },
+        options: {
+          max_candidates: maxCandidates,
+          ...(payload.links
+            ? {
+                direct_links: payload.links,
+                expand_from_primary: payload.expandFromPrimary,
+              }
+            : {}),
+        },
       });
       navigate(`/browser/task/${task.id}`);
     } catch (exc) {
@@ -218,7 +225,7 @@ export default function BrowserHomePage() {
               <h2 className="section-title">
                 说清楚你要买什么
                 <span className="section-note">
-                  填表最稳，也可以写一句话自动填好
+                  贴商品链接最准，也可以填表或写一句话
                 </span>
               </h2>
             </div>

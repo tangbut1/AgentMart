@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from loguru import logger
 
 from ..domain.enums import DataStatus, Platform
-from ..domain.matching import group_offers
+from ..domain.matching import group_offers, search_keyword_from_title
 from ..domain.models import CanonicalProduct, Offer, UserPreferences
 from ..domain.pricing import compute_price_breakdown
 from ..domain.recommendation import recommend
@@ -526,9 +526,18 @@ class TaskOptions:
     url_overrides: Dict[str, str] = field(default_factory=dict)
     # 是否在深入分析前询问"要不要加入专业评测"（需求第 2 步）
     ask_review_question: bool = True
+    # 「单品跨平台对决」模式：用户直接提供的商品详情页链接，按平台分组。
+    # 给了链接就完全跳过搜索列表页 —— 那是平台反爬最厚的一层。
+    direct_links: Dict[Platform, List[str]] = field(default_factory=dict)
+    # 只给了一条主链接时，是否去其它平台搜同款（默认开）。
+    # 关掉就只对比用户贴的那几条，绝不主动搜索。
+    expand_from_primary: bool = True
 
     def override(self, platform: Platform, kind: str) -> Optional[str]:
         return self.url_overrides.get(f"{platform.value}.{kind}")
+
+    def links_for(self, platform: Platform) -> List[str]:
+        return list(self.direct_links.get(platform) or [])
 
     def to_dict(self) -> dict:
         return {
@@ -545,6 +554,11 @@ class TaskOptions:
             "origin_label": self.origin.label,
             "url_overrides": dict(self.url_overrides),
             "ask_review_question": self.ask_review_question,
+            "direct_links": {
+                platform.value: list(urls)
+                for platform, urls in self.direct_links.items()
+            },
+            "expand_from_primary": self.expand_from_primary,
         }
 
 
@@ -917,6 +931,10 @@ class ShoppingAgent:
 
     # ---- 主流程 ----
     async def _run(self, task: AgentTask) -> None:
+        # 用户只贴了别家平台的链接时，先打开主链接把精确型号提出来，
+        # 否则其它平台拿不到搜索词，只能跳过
+        if task.options.direct_links and task.options.expand_from_primary:
+            await self._extract_primary_model(task)
         try:
             await asyncio.gather(
                 *(self._run_platform(task, p) for p in task.options.platforms),
@@ -999,6 +1017,89 @@ class ShoppingAgent:
             )
 
     # ---- 单平台执行 ----
+    def _primary_link(self, task: AgentTask) -> Tuple[Optional[Platform], str]:
+        """挑出「主链接」：用户贴的链接里，排在最前面的那一条。
+
+        只贴一个平台时就是那一条；贴了多个平台时取第一个有链接的平台，
+        用它提炼出的型号去别的平台搜同款。
+        """
+        for platform in task.options.platforms:
+            urls = task.options.links_for(platform)
+            if urls:
+                return platform, urls[0]
+        for platform, urls in task.options.direct_links.items():
+            if urls:
+                return platform, urls[0]
+        return None, ""
+
+    async def _extract_primary_model(self, task: AgentTask) -> None:
+        """打开主链接，提炼精确品牌型号，供其它平台精准搜同款。
+
+        用户只贴了一条京东链接时，淘宝/拼多多那边没有任何链接可用，
+        搜索词必须是这条链接里那款商品的精确型号 —— 拿用户原话去搜，
+        搜回来的是别家商品，跨平台比价就失去了意义。
+
+        这一步失败不影响任务继续：各平台该开的开，搜不到同款时如实说明。
+        """
+        if (task.requirement.keyword or "").strip():
+            return  # 用户自己填了型号，不用再从链接里提
+        platform, url = self._primary_link(task)
+        if not url:
+            return
+        state = task.states[platform]
+        group = profile_group(platform)
+        state.status = TaskStatus.RUNNING
+        state.started_at = datetime.now()
+        state.log(
+            ActionKind.READ,
+            f"先打开您提供的主链接，提取精确品牌型号：{url}",
+        )
+        try:
+            async with self._semaphore:
+                async with self._lock_for(group):
+                    session = await self._acquire_session(task, platform, state)
+                    session.busy = True
+                    try:
+                        driver = session.driver
+                        if not await self._goto(driver, state, url):
+                            state.problems.append(
+                                f"主链接打不开，无法提取型号：{url}"
+                            )
+                            return
+                        await self._probe_blocked(driver, state, platform)
+                        raw = await driver.evaluate(JS_PRODUCT_FIELDS)
+                    finally:
+                        session.busy = False
+                        state.finished_at = datetime.now()
+        except BlockedPlatform as exc:
+            state.problems.append(
+                f"主链接所在平台暂时无法自动访问（{exc.reason.label}），未能提取型号"
+            )
+            return
+        except Exception as exc:
+            logger.warning(f"[{platform.value}] 主链接型号提取失败: {exc}")
+            state.problems.append("主链接打开后未能提取到型号，其它平台将跳过同款搜索")
+            return
+
+        if not isinstance(raw, dict):
+            state.problems.append("主链接页面没有返回可识别的商品信息")
+            return
+        fields = PageFields.from_js(raw)
+        title = (fields.title or "").strip()
+        keyword = search_keyword_from_title(title)
+        if not keyword:
+            state.problems.append(
+                "没能从主链接的标题里提炼出明确型号（"
+                f"标题：{title[:60] or '空'}），已跳过其它平台的同款搜索。"
+                "您也可以在上方直接填写型号。"
+            )
+            return
+        task.requirement.keyword = keyword
+        task.notes.append(
+            f"已从主链接提取型号「{keyword}」，正在其它平台搜同款"
+        )
+        state.log(ActionKind.READ, f"提取到型号：{keyword}")
+
     async def _run_platform(self, task: AgentTask, platform: Platform) -> None:
         state = task.states[platform]
         cancel_event = asyncio.Event()
@@ -1080,20 +1181,45 @@ class ShoppingAgent:
                 )
                 await self._probe_blocked(driver, state, platform)
 
-        # 2) 搜索
-        await self._guard(task, state, cancel_event, deadline)
-        search = self._search_url(task, platform, task.requirement.keyword)
-        if not await self._goto(driver, state, search):
-            raise BlockedPlatform(BlockedReason.NAVIGATION_FAILED, f"无法打开搜索页 {search}")
-        await self._probe_blocked(driver, state, platform)
+        # 2) 收集要细看的商品链接。
+        # 有用户直接提供的详情页链接就全用它，完全跳过搜索列表页 ——
+        # 搜索页是平台反爬最厚的一层（京东 search.jd.com、淘宝 s.taobao.com
+        # 都是流量变现核心），商品详情页为了 SEO 和外部引流基本公开开放。
+        direct = task.options.links_for(platform)
+        if direct:
+            links = [{"url": u, "title": ""} for u in direct]
+            state.log(
+                ActionKind.READ,
+                f"使用您提供的商品链接 {len(links)} 条，不经过搜索列表页",
+            )
+        elif task.options.expand_from_primary and task.options.direct_links:
+            # 用户只贴了别的平台的链接：这台平台上没有直连链接，
+            # 用主链接提取出的型号去精准搜同款。
+            keyword = task.requirement.keyword
+            links = await self._search_same_model(
+                task, platform, state, driver, cancel_event
+            )
+            if links is None:
+                return
+            state.log(
+                ActionKind.READ,
+                f"按主链接型号「{keyword}」在{recipe.display_name}搜到 "
+                f"{len(links)} 个同款候选",
+            )
+        else:
+            search = self._search_url(task, platform, task.requirement.keyword)
+            if not await self._goto(driver, state, search):
+                raise BlockedPlatform(
+                    BlockedReason.NAVIGATION_FAILED, f"无法打开搜索页 {search}"
+                )
+            await self._probe_blocked(driver, state, platform)
+            links = await self._collect_links(driver, state, task)
 
-        # 3) 收集商品链接（确定性 DOM 规则）
-        links = await self._collect_links(driver, state, task)
-        state.log(ActionKind.READ, f"搜索结果页识别到 {len(links)} 个商品链接")
+        state.log(ActionKind.READ, f"待细看商品 {len(links)} 个")
         if not links:
             raise BlockedPlatform(
                 BlockedReason.STRUCTURE_UNKNOWN,
-                "未能在搜索结果页识别出商品链接（页面结构可能已变化或需要登录）",
+                "未能取得可查看的商品链接（既没有您提供的链接，搜索页也没有识别出商品）",
             )
 
         # 4) 逐个打开商品页抽取字段
@@ -1190,6 +1316,38 @@ class ShoppingAgent:
             state.pages_visited += 1
             state.log(ActionKind.NAVIGATE, f"打开 {url[:90]}", url=url)
         return bool(ok)
+
+    async def _search_same_model(
+        self,
+        task: AgentTask,
+        platform: Platform,
+        state: PlatformState,
+        driver: BrowserDriver,
+        cancel_event: asyncio.Event,
+    ) -> Optional[List[Dict[str, str]]]:
+        """用主链接提取出的型号，在这个平台上精准搜同款。
+
+        提取不出型号就返回空列表并记一条待核实说明 —— 不猜着搜，
+        搜出来的多半不是同款，把不同商品放一起比价没有指导意义。
+        """
+        keyword = (task.requirement.keyword or "").strip()
+        if not keyword:
+            state.problems.append(
+                "未能从您提供的链接中提取到明确型号，已跳过这个平台的同款搜索"
+            )
+            return []
+        await self._guard(task, state, cancel_event, self._deadline_of(task))
+        search = self._search_url(task, platform, keyword)
+        if not await self._goto(driver, state, search):
+            state.problems.append(f"无法打开搜索页 {search}")
+            return []
+        await self._probe_blocked(driver, state, platform)
+        return await self._collect_links(driver, state, task)
+
+    def _deadline_of(self, task: AgentTask) -> float:
+        """任务级截止时刻。各平台的 deadline 在 _run_platform 里算，
+        这里给 _search_same_model 复用同一个预算，避免它自己另起一段。"""
+        return asyncio.get_running_loop().time() + task.options.max_task_seconds
 
     async def _collect_links(
         self, driver: BrowserDriver, state: PlatformState, task: AgentTask
