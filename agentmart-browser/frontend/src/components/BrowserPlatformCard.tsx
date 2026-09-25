@@ -141,11 +141,15 @@ export default function BrowserPlatformCard({
 
         {state.status === "waiting_user" && (
           <Notice tone="warn" title="需要您接管">
-            {state.blocked_reason_label ?? "需要您操作"}：
-            {state.blocked_detail ??
-              "请在弹出来的浏览器窗口里自己完成登录或验证，完成后这里会自动继续。"}
+            {state.takeover
+              ? state.takeover.message
+              : `${state.blocked_reason_label ?? "需要您操作"}：${
+                  state.blocked_detail ??
+                  "请在弹出来的浏览器窗口里自己完成登录或验证，完成后这里会自动继续。"
+                }`}
             <div className="mt-8 small">
-              窗口里就是平台官方页面。我不会代填账号密码、不记录短信验证码、也不尝试绕过验证码。
+              窗口里就是平台官方页面，我不会代填账号密码、不记录短信验证码、也不尝试绕过验证码。
+              处理完我会自动接着比价，不需要你重新开始。
             </div>
           </Notice>
         )}

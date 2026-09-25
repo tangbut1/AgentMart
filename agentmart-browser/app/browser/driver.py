@@ -35,6 +35,8 @@ class BrowserDriver(Protocol):
 
     async def screenshot_clip(self, selector: Optional[str] = None) -> Optional[bytes]: ...
 
+    async def bring_to_front(self) -> None: ...
+
     @property
     def current_url(self) -> str: ...
 
@@ -116,6 +118,20 @@ class PlaywrightDriver:
         except Exception:
             return None
 
+    async def bring_to_front(self) -> None:
+        """把窗口调到最前，让用户一眼看到要处理的验证。
+
+        用户此刻多半在看别的窗口。不调前台的话，"正在为您展开浏览器窗口"
+        就是句空话 —— 用户根本不知道去点哪个窗口。
+        """
+        if self._page is None:
+            return
+        try:
+            await self._page.bring_to_front()
+        except Exception:
+            # 调前台失败不影响主流程：窗口本来就是可见的
+            pass
+
     @property
     def current_url(self) -> str:
         return self._page.url if self._page is not None else ""
@@ -145,6 +161,7 @@ class ScriptedDriver:
         self.started = False
         self.stopped = False
         self.goto_delay = goto_delay
+        self.brought_to_front = False
         self._raise_on_goto: Optional[str] = None
 
     def raise_on_goto(self, url_contains: str) -> None:
@@ -194,6 +211,9 @@ class ScriptedDriver:
 
     async def screenshot_clip(self, selector: Optional[str] = None) -> Optional[bytes]:
         return None
+
+    async def bring_to_front(self) -> None:
+        self.brought_to_front = True
 
 
 async def run_with_timeout(coro, seconds: float):

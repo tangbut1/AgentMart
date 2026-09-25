@@ -22,7 +22,7 @@ import subprocess
 
 import pytest
 
-from app.browser.agent import BlockedPlatform, ShoppingAgent
+from app.browser.agent import BlockedPlatform, NeedsUserTakeover, ShoppingAgent
 from app.browser.enums import BlockedReason
 from app.browser.recipes import JS_BLOCKED_PROBE
 
@@ -115,12 +115,19 @@ class _Driver:
         return self.probe
 
 
-async def test_risk_page_raises_risk_control():
+async def test_risk_page_asks_user_to_take_over():
+    """风控页不再是"直接放弃"：先交给用户接管，用户处理不完才判平台限制。
+
+    这一条是分水岭。以前这里抛 BlockedPlatform，用户看到的就是
+    "该平台本次未完成"，明明滑一下就能过，却白白少一个平台的比价结果。
+    """
     agent = ShoppingAgent(max_concurrency=1)
     driver = _Driver({"captcha": False, "risk": True, "unavailable": False})
-    with pytest.raises(BlockedPlatform) as excinfo:
+    with pytest.raises(NeedsUserTakeover) as excinfo:
         await agent._probe_blocked(driver, object(), None)
     assert excinfo.value.reason is BlockedReason.RISK_CONTROL
+    # 提示要说清是什么，且不能引导用户去"重新登录"（那是另一个原因）
+    assert "频繁" in excinfo.value.detail or "限制" in excinfo.value.detail
 
 
 async def test_gateway_error_raises_navigation_failed_not_structure():

@@ -20,7 +20,7 @@ import subprocess
 
 import pytest
 
-from app.browser.agent import BlockedPlatform, ShoppingAgent
+from app.browser.agent import NeedsUserTakeover, ShoppingAgent
 from app.browser.enums import BlockedReason
 from app.browser.recipes import JS_BLOCKED_PROBE
 
@@ -90,11 +90,15 @@ class _Driver:
         return self.probe
 
 
-async def test_probe_blocked_raises_risk_control_for_rate_limit():
-    """限流页要抛 RISK_CONTROL，不能被放行到"识别不到商品链接"那一步。"""
+async def test_probe_blocked_hands_rate_limit_to_the_user():
+    """限流页要交给用户接管，不能被放行到"识别不到商品链接"那一步。
+
+    限流多半是同一账号/网络短时间内搜太多次，等一会儿或过个验证就能继续 ——
+    这正是"人机协同"该接手的场景，直接判失败会白白丢掉这个平台。
+    """
     agent = ShoppingAgent(max_concurrency=1)
     driver = _Driver({"captcha": False, "risk": True, "loginWall": False})
-    with pytest.raises(BlockedPlatform) as excinfo:
+    with pytest.raises(NeedsUserTakeover) as excinfo:
         await agent._probe_blocked(driver, object(), None)
     assert excinfo.value.reason is BlockedReason.RISK_CONTROL
     # 文案要说清"被限制"，不能把用户引去重新登录

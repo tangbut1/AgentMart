@@ -76,6 +76,14 @@ export interface PlatformState {
   finished_at: string | null;
   profile_group: string;
   paused: boolean;
+  /** 风控/验证码需要用户在浏览器窗口里处理时为真，处理完自动恢复比价 */
+  takeover: {
+    kind: string;
+    kind_label: string;
+    message: string;
+    since: string;
+    resolved: boolean;
+  } | null;
   urls: string[];
   recipe: {
     home_url: string;

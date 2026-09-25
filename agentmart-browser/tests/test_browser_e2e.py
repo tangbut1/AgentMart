@@ -167,3 +167,79 @@ def test_blocked_platform_is_recorded_not_faked(client):
         result = client.get(f"/api/browser/tasks/{task_id}/result").json()
         # 没能取到价就不该出现任何商品，更不能出现演示数据
         assert all(not offer["is_demo"] for g in result["groups"] for offer in g["offers"])
+
+
+def _wait_for(client: TestClient, task_id: str, predicate, timeout: float = 90.0):
+    """轮询到 predicate(task) 为真，返回那一刻的任务快照。"""
+    import time
+
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        resp = client.get(f"/api/browser/tasks/{task_id}")
+        assert resp.status_code == 200, resp.text
+        last = resp.json()
+        if predicate(last):
+            return last
+        time.sleep(0.5)
+    raise AssertionError(f"条件在 {timeout}s 内没出现：{last and last['summary_status']}")
+
+
+def test_user_takeover_resumes_pipeline_with_real_chromium(client):
+    """真实浏览器里跑一遍「验证码 → 等用户 → 用户处理完 → 自己接着比价」。
+
+    夹具首页/搜索页在前 8 秒返回安全验证页，之后恢复正常 ——
+    相当于用户在窗口里滑完了验证码。要验证的是：
+    1. 期间平台确实进入 waiting_user 并带上 takeover 提示，任务没有失败；
+    2. 验证消失后流水线自己往下走，不需要重新开始；
+    3. 最终结果仍是真实夹具商品，没有演示数据。
+    """
+    spec = FixtureSpec(captcha_first_seconds=8.0)
+    with FixtureServer(spec) as server:
+        base = server.base_url
+        service.agent.set_driver_factory(_playwright_factory(base))
+
+        created = client.post(
+            "/api/browser/tasks",
+            json={
+                "text": "预算 900 元买一件防雨透气的冲锋衣",
+                "platforms": ["jd"],
+                "options": {
+                    "max_candidates": 2,
+                    "ask_review_question": False,
+                    "origin": "test_fixture",
+                    "headless": True,
+                    "max_task_seconds": 120,
+                    "url_overrides": {
+                        "jd.home": f"{base}/jd/home.html",
+                        "jd.search": f"{base}/jd/search.html",
+                    },
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        client.post(f"/api/browser/tasks/{task_id}/start")
+
+        waiting = _wait_for(client, task_id, lambda t: t["summary_status"] == "waiting_user")
+        assert "安全验证" in (waiting["waiting_reason"] or "")
+        jd = next(p for p in waiting["platforms"] if p["platform"] == "jd")
+        assert jd["takeover"]["kind"] == "captcha"
+        assert jd["takeover"]["resolved"] is False
+
+        # 验证消失后必须自己回到 running，然后正常跑完
+        resumed = _wait_for(
+            client,
+            task_id,
+            lambda t: t["summary_status"] == "running"
+            and any("安全验证已通过" in s["detail"] for p in t["platforms"] for s in p["steps"]),
+        )
+        assert resumed["waiting_reason"] is None
+        assert next(p for p in resumed["platforms"] if p["platform"] == "jd")["takeover"] is None
+
+        final = _wait_terminal(client, task_id, timeout=120)
+        assert final["summary_status"] == "completed", final["notes"]
+        assert final["offer_count"] >= 1
+
+        result = client.get(f"/api/browser/tasks/{task_id}/result").json()
+        assert all(not offer["is_demo"] for g in result["groups"] for offer in g["offers"])

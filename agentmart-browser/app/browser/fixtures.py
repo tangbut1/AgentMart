@@ -60,9 +60,21 @@ _JD_PRODUCT = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <div class="region">配送至：{region}</div>
 </body></html>"""
 
+# 安全验证页：和真实平台一样，页面自己轮询验证状态，通过后跳回原页面。
+# 这一跳很关键 —— 用户处理完验证，是平台把当前标签页送走的，
+# 不是我们去刷新。所以 takeover 的"验证已消失"探测才有东西可探。
 _CAPTCHA = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>安全验证 - 夹具</title></head><body>
 <h1>安全验证</h1><p>请完成滑块验证后继续访问。</p>
+<script>
+var back = new URLSearchParams(location.search).get('back') || '/jd/home.html';
+setInterval(function () {{
+  fetch('/jd/captcha-status.json', {{cache: 'no-store'}})
+    .then(function (r) {{ return r.json(); }})
+    .then(function (d) {{ if (!d.blocked) location.replace(back); }})
+    .catch(function () {{}});
+}}, 500);
+</script>
 </body></html>"""
 
 _LOGIN_EXPIRED = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -120,12 +132,24 @@ class FixtureSpec:
     region: str = "北京市"
     # 首页是否呈现已登录状态（用于测试"需要用户登录"分支）
     home_logged_in: bool = True
+    # 启动后前 N 秒，首页/搜索页先返回安全验证页，之后恢复正常
+    # （用于测试"人机协同接管"：用户处理完验证后流水线自己接着跑）
+    captcha_first_seconds: float = 0.0
 
     def product(self, product_id: Optional[str]) -> FixtureProduct:
         for item in self.products:
             if item.id == product_id:
                 return item
         return self.products[0]
+
+    def captcha_now(self) -> bool:
+        if self.captcha_first_seconds <= 0:
+            return False
+        import time
+
+        if not hasattr(self, "_captcha_born_at"):
+            self._captcha_born_at = time.monotonic()
+        return (time.monotonic() - self._captcha_born_at) < self.captcha_first_seconds
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -150,10 +174,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         spec = self.spec
         if path == "/jd/home.html":
+            if spec.captcha_now():
+                return self._send(_CAPTCHA.format(back="/jd/home.html"))
             if spec.home_logged_in:
                 return self._send(_JD_HOME_LOGGED_IN)
             return self._send(_JD_HOME_LOGGED_OUT)
         if path == "/jd/search.html":
+            if spec.captcha_now():
+                return self._send(_CAPTCHA.format(back=f"/jd/search.html?{parsed.query}"))
             keyword = (query.get("keyword") or [spec.keyword])[0]
             links = "".join(
                 f'<a class="item" href="/jd/product.html?id={item.id}&title={item.title}">'
@@ -178,8 +206,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     region=spec.region,
                 )
             )
+        if path == "/jd/captcha-status.json":
+            body = ('{"blocked": %s}' % ("true" if spec.captcha_now() else "false")).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/captcha.html":
-            return self._send(_CAPTCHA)
+            return self._send(_CAPTCHA.format(back="/jd/home.html"))
         if path == "/login-expired.html":
             return self._send(_LOGIN_EXPIRED)
         return self._send("<html><body><h1>404 夹具</h1></body></html>", 404)

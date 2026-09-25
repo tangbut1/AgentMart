@@ -124,12 +124,29 @@ _MODEL_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[-–][A-Za-z0-9]+)*\d[\w-
 # 于是把"还没渲染完"误判成"页面结构不认识"（京东实测就是这样）。
 _LINK_WAIT_SECONDS = 12.0
 _LINK_POLL_SECONDS = 0.5
+# 等用户处理安全验证时的轮询间隔。取 1.5 秒：滑块点完页面要跳转，
+# 太快会抢在跳转前又探到一次 captcha，把"已经处理完"误判成"还没处理"。
+_TAKEOVER_POLL_SECONDS = 1.5
 
 
 def _short_reason(exc: BaseException, limit: int = 160) -> str:
     """把底层异常压成一行可读的原因，去掉多行堆栈。"""
     text = " ".join(str(exc).split())
     return text[:limit] + ("…" if len(text) > limit else "")
+
+
+class NeedsUserTakeover(RuntimeError):
+    """页面出现了只有用户本人能解开的验证（滑块/图形验证码/风控确认）。
+
+    这不是失败：工具不尝试识别或绕过验证码，但也不该就此把这个平台
+    判死刑。抛出去让上层进入「等待用户接管」，用户在自己的浏览器窗口里
+    处理完，流程原路继续。
+    """
+
+    def __init__(self, reason: BlockedReason, detail: str):
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
 
 
 class BlockedPlatform(RuntimeError):
@@ -467,6 +484,10 @@ class PlatformState:
     paused: bool = False
     profile_group: str = ""
     urls: List[str] = field(default_factory=list)
+    # 正在等用户处理的安全验证（captcha / risk_control）。
+    # 用 TaskStatus.WAITING_USER 承载，另挂这个细节：两种"等用户"的
+    # 提示语和后续动作完全不同，前端要能区分，不能都显示成"等待登录"。
+    takeover: Optional[Dict[str, Any]] = None
 
     def log(self, action: ActionKind, detail: str, url: Optional[str] = None) -> None:
         self.steps.append(StepLog(seq=len(self.steps) + 1, action=action, detail=detail, url=url))
@@ -498,6 +519,7 @@ class PlatformState:
             "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
             "profile_group": self.profile_group,
             "paused": self.paused,
+            "takeover": dict(self.takeover) if self.takeover else None,
             "urls": self.urls[-8:],
             "recipe": {
                 "home_url": get_recipe(self.platform).home_url,
@@ -1066,7 +1088,10 @@ class ShoppingAgent:
                                 f"主链接打不开，无法提取型号：{url}"
                             )
                             return
-                        await self._probe_blocked(driver, state, platform)
+                        await self._check_blocked(
+                            driver, task, state, platform,
+                            self._cancel_events[task.id], self._deadline_of(task),
+                        )
                         raw = await driver.evaluate(JS_PRODUCT_FIELDS)
                     finally:
                         session.busy = False
@@ -1169,7 +1194,7 @@ class ShoppingAgent:
         home_url = task.options.override(platform, "home") or recipe.login_entry()
         if not await self._goto(driver, state, home_url):
             raise BlockedPlatform(BlockedReason.NAVIGATION_FAILED, f"无法打开 {home_url}")
-        await self._probe_blocked(driver, state, platform)
+        await self._check_blocked(driver, task, state, platform, cancel_event, deadline)
 
         if recipe.requires_login_for_price:
             logged_in = await self._probe_login(driver, state)
@@ -1179,7 +1204,9 @@ class ShoppingAgent:
                     deadline, cancel_event,
                     "该平台需要登录后才能看到价格与优惠，请在可见窗口中完成登录/扫码",
                 )
-                await self._probe_blocked(driver, state, platform)
+                await self._check_blocked(
+                    driver, task, state, platform, cancel_event, deadline
+                )
 
         # 2) 收集要细看的商品链接。
         # 有用户直接提供的详情页链接就全用它，完全跳过搜索列表页 ——
@@ -1212,7 +1239,7 @@ class ShoppingAgent:
                 raise BlockedPlatform(
                     BlockedReason.NAVIGATION_FAILED, f"无法打开搜索页 {search}"
                 )
-            await self._probe_blocked(driver, state, platform)
+            await self._check_blocked(driver, task, state, platform, cancel_event, deadline)
             links = await self._collect_links(driver, state, task)
 
         state.log(ActionKind.READ, f"待细看商品 {len(links)} 个")
@@ -1251,7 +1278,7 @@ class ShoppingAgent:
             if not await self._goto(driver, state, url):
                 state.problems.append(f"商品页打开失败：{url}")
                 continue
-            await self._probe_blocked(driver, state, platform)
+            await self._check_blocked(driver, task, state, platform, cancel_event, deadline)
             fields_raw = await driver.evaluate(JS_PRODUCT_FIELDS)
             if not isinstance(fields_raw, dict):
                 state.problems.append(f"页面字段抽取失败：{url}")
@@ -1341,7 +1368,9 @@ class ShoppingAgent:
         if not await self._goto(driver, state, search):
             state.problems.append(f"无法打开搜索页 {search}")
             return []
-        await self._probe_blocked(driver, state, platform)
+        await self._check_blocked(
+            driver, task, state, platform, cancel_event, self._deadline_of(task)
+        )
         return await self._collect_links(driver, state, task)
 
     def _deadline_of(self, task: AgentTask) -> float:
@@ -1394,17 +1423,15 @@ class ShoppingAgent:
         if not isinstance(probe, dict):
             return
         if probe.get("captcha"):
-            raise BlockedPlatform(
+            raise NeedsUserTakeover(
                 BlockedReason.CAPTCHA,
-                "页面出现验证码/安全验证。本工具不尝试识别或绕过验证码，"
-                "该平台本次标记为未完成。",
+                "页面出现验证码/安全验证。本工具不尝试识别或绕过验证码。",
             )
         if probe.get("risk"):
-            raise BlockedPlatform(
+            raise NeedsUserTakeover(
                 BlockedReason.RISK_CONTROL,
                 "平台提示访问过于频繁/搜索被限制（常见原因是短期内同一账号"
-                "或网络搜索次数偏多）。已停止该平台的自动访问——不会用重试"
-                "绕过它。请隔一段时间再试，或改用您手动提供的商品链接。",
+                "或网络搜索次数偏多）。",
             )
         if probe.get("unavailable"):
             raise BlockedPlatform(
@@ -1417,6 +1444,131 @@ class ShoppingAgent:
                 BlockedReason.LOGIN_REQUIRED,
                 "页面要求登录后才能查看内容。",
             )
+
+    async def _still_blocked(
+        self, driver: BrowserDriver, reason: BlockedReason
+    ) -> bool:
+        """重新探测：原来那个验证还在不在。
+
+        用户在自己的窗口里处理完，页面通常自己跳到商品页或搜索结果页，
+        探针就不再报 captcha/risk。只看 reason 对应的那一项 ——
+        处理验证码的过程中页面可能短暂冒出别的提示，不能因此判成"没处理完"。
+        """
+        try:
+            probe = await driver.evaluate(JS_BLOCKED_PROBE) or {}
+        except Exception:
+            # 页面正在跳转时求值会失败。这通常是验证通过后的正常现象，
+            # 当成"已经过去"，让上层重新走一遍流程自己判断。
+            return False
+        if not isinstance(probe, dict):
+            return False
+        if reason is BlockedReason.CAPTCHA:
+            return bool(probe.get("captcha"))
+        if reason is BlockedReason.RISK_CONTROL:
+            return bool(probe.get("risk"))
+        return False
+
+    async def _check_blocked(
+        self,
+        driver: BrowserDriver,
+        task: AgentTask,
+        state: PlatformState,
+        platform: Platform,
+        cancel_event: asyncio.Event,
+        deadline: float,
+    ) -> None:
+        """探测风控；遇到只有用户能解开的验证就交给他，处理完原路继续。
+
+        这是"遇到风控直接放弃"和"人机协同接管"的分界：验证码不猜、不绕，
+        但也不把一个能解开的验证判成平台失败。用户处理完，这一步正常返回，
+        调用方接着往下走，就像什么都没发生过。
+        """
+        try:
+            await self._probe_blocked(driver, state, platform)
+        except NeedsUserTakeover as exc:
+            await self._wait_user_takeover(
+                driver, task, state, platform, cancel_event, deadline, exc
+            )
+
+    @staticmethod
+    def _other_waiting_reason(task: AgentTask, exclude: Platform) -> Optional[str]:
+        """还有别的平台在等用户时，任务级的等待原因要指着它，不能清空。
+
+        五个平台是并发跑的：京东在等用户滑验证码的同时，淘宝可能也在等。
+        京东处理完了就把 waiting_reason 清成 None，前端就看不到淘宝还在等。
+        """
+        for platform, state in task.states.items():
+            if platform is exclude:
+                continue
+            if state.status is TaskStatus.WAITING_USER and state.takeover:
+                return str(state.takeover.get("message") or "")
+        return None
+
+    async def _wait_user_takeover(
+        self,
+        driver: BrowserDriver,
+        task: AgentTask,
+        state: PlatformState,
+        platform: Platform,
+        cancel_event: asyncio.Event,
+        deadline: float,
+        exc: NeedsUserTakeover,
+    ) -> None:
+        recipe = get_recipe(platform)
+        message = (
+            f"{recipe.display_name}页面出现了安全验证，正在为您展开浏览器窗口，"
+            "请您在窗口中滑动一下，完成后我将继续为您比价……"
+        )
+        state.status = TaskStatus.WAITING_USER
+        state.takeover = {
+            "kind": exc.reason.value,
+            "kind_label": exc.reason.label,
+            "message": message,
+            "since": datetime.now().strftime("%H:%M:%S"),
+            "resolved": False,
+        }
+        state.log(ActionKind.WAIT_USER, message, url=driver.current_url or None)
+        task.waiting_reason = message
+        # 把窗口调到最前：不调的话用户根本不知道去点哪个窗口
+        await driver.bring_to_front()
+
+        loop = asyncio.get_running_loop()
+        # 接管等待不占用任务总时长预算之外的时间，但也不能无限等：
+        # 用户可能已经离开电脑。用同一个 deadline，超时就如实报未完成。
+        while True:
+            if cancel_event.is_set() or self._cancel_events[task.id].is_set():
+                state.takeover = None
+                state.status = TaskStatus.CANCELLED
+                state.log(ActionKind.WAIT_USER, "任务被取消")
+                raise asyncio.CancelledError()
+            if loop.time() >= deadline:
+                break
+            await asyncio.sleep(_TAKEOVER_POLL_SECONDS)
+            if not await self._still_blocked(driver, exc.reason):
+                state.takeover = None
+                state.status = TaskStatus.RUNNING
+                task.waiting_reason = self._other_waiting_reason(task, platform)
+                state.log(
+                    ActionKind.READ,
+                    "检测到安全验证已通过，继续为您比价",
+                )
+                return
+
+        # 等过了预算用户还没处理：如实记下这个平台本次未完成，
+        # 并把"是你这边没处理完"和"平台拦住了"区分开
+        detail = (
+            f"{exc.detail}已弹出可见窗口并等待您处理，但在任务时限内没有完成。"
+            "您可以重新开始这个平台；本工具不会替您处理验证。"
+        )
+        state.takeover = None
+        state.status = TaskStatus.RESTRICTED
+        state.blocked_reason = exc.reason
+        state.blocked_detail = detail
+        state.log(ActionKind.WAIT_USER, f"等待超时，未完成安全验证（{exc.reason.label}）")
+        task.notes.append(
+            f"{recipe.display_name}：{exc.reason.label}，等待您处理后超时，本次未完成。"
+        )
+        raise BlockedPlatform(exc.reason, detail)
 
     async def _probe_login(self, driver: BrowserDriver, state: PlatformState) -> bool:
         try:

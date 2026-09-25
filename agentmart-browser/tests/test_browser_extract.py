@@ -25,7 +25,13 @@ from app.browser.agent import (
     parse_requirement,
 )
 from app.browser.driver import ScriptedDriver, ScriptedStep
-from app.browser.enums import BlockedReason, DataOrigin, PriceCertainty, TaskStatus
+from app.browser.enums import (
+    ActionKind,
+    BlockedReason,
+    DataOrigin,
+    PriceCertainty,
+    TaskStatus,
+)
 from app.browser.extract import (
     PageFields,
     amounts_agree,
@@ -338,7 +344,11 @@ def _task(agent, platforms, **options):
 
 @pytest.mark.asyncio
 async def test_platform_failure_does_not_fail_whole_task():
-    """京东被风控挡住时，淘宝仍应正常完成。"""
+    """京东撞上风控时，淘宝仍应正常完成。
+
+    京东这里脚本一直报风控（用户始终没处理），所以走完"等用户 → 超时"
+    才落 RESTRICTED。max_task_seconds 给小一点，让超时快点到。
+    """
     steps = [
         ScriptedStep("jd", results={"login": {"looksLoggedIn": True},
                                     "blocked": {"captcha": False, "risk": True}}),
@@ -350,9 +360,9 @@ async def test_platform_failure_does_not_fail_whole_task():
         }),
     ]
     agent, driver = _scripted_agent(steps)
-    task = _task(agent, [Platform.JD, Platform.TAOBAO])
+    task = _task(agent, [Platform.JD, Platform.TAOBAO], max_task_seconds=2.0)
     await agent.start(task.id)
-    for _ in range(40):
+    for _ in range(80):
         if task.status.is_terminal:
             break
         await __import__("asyncio").sleep(0.1)
@@ -363,6 +373,9 @@ async def test_platform_failure_does_not_fail_whole_task():
     assert len(task.real_offers) == 1
     # 平台被阻止时明确记录，不用演示数据补齐
     assert any("未用演示数据补齐" in n for n in task.notes)
+    # 等用户那一下也要留痕，用户才知道刚才发生了什么
+    assert any(step.action == ActionKind.WAIT_USER
+               for step in task.state_of(Platform.JD).steps)
     # 全程只做只读动作：没有任何一步会改变账号状态
     for state in task.states.values():
         for step in state.steps:
@@ -371,14 +384,15 @@ async def test_platform_failure_does_not_fail_whole_task():
 
 @pytest.mark.asyncio
 async def test_captcha_marks_platform_restricted():
+    """验证码一直没处理 → 等用户 → 超时 → 平台如实记 RESTRICTED，不编商品。"""
     steps = [
         ScriptedStep("jd", results={"login": {"looksLoggedIn": True},
                                     "blocked": {"captcha": True}}),
     ]
     agent, driver = _scripted_agent(steps)
-    task = _task(agent, [Platform.JD])
+    task = _task(agent, [Platform.JD], max_task_seconds=2.0)
     await agent.start(task.id)
-    for _ in range(40):
+    for _ in range(80):
         if task.status.is_terminal:
             break
         await __import__("asyncio").sleep(0.1)
@@ -386,6 +400,9 @@ async def test_captcha_marks_platform_restricted():
     assert state.status == TaskStatus.RESTRICTED
     assert state.blocked_reason == BlockedReason.CAPTCHA
     assert not state.offers
+    # 超时原因要说清"等您处理但没完成"，不能含混成"平台拦住了我们"
+    assert "没有完成" in state.blocked_detail
+    assert any("等待您处理后超时" in n for n in task.notes)
 
 
 @pytest.mark.asyncio
