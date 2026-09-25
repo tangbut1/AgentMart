@@ -328,6 +328,14 @@ export interface OfferView {
   is_demo: boolean;
   match_confidence: number | null;
   match_notes: string[];
+  /** 与组内基准规格的关系。matched / variant / unknown
+   *
+   *  variant 时这一行的价格对应另一个规格，不能和别行直接比大小；
+   *  unknown 时没读到规格，同样不能确认是不是同一个 SKU。 */
+  sku_sync: "matched" | "variant" | "unknown";
+  sku_sync_label: string;
+  /** 归一化后的规格描述（"黑色 L码 256GB"）；没读到时是 null */
+  sku_spec: string | null;
 }
 
 export interface GroupView {
@@ -340,6 +348,10 @@ export interface GroupView {
   best_definite_price: string | null;
   /** 公开轨上的最低到手价 —— 跨平台比价看这个，别拿账号券去比商品 */
   best_public_price: string | null;
+  /** 组内规格是否统一。matched / mixed / unknown。
+   *
+   *  mixed 时各行价格对应不同规格，横向对比表不能直接比大小。 */
+  sku_status: "matched" | "mixed" | "unknown";
   offers: OfferView[];
 }
 
@@ -364,6 +376,44 @@ export interface RecommendationView {
   missing_data: string[];
   generated_at: string | null;
   options: RecommendationOption[];
+  matrix: DecisionMatrixView | null;
+}
+
+/** 决策矩阵的一格。值由后端算好，前端只渲染，不重算任何分数。 */
+export interface DecisionCell {
+  key: string;
+  label: string;
+  value: string;
+  note: string;
+  tone: "ok" | "warn" | "danger" | "muted";
+}
+
+export interface DecisionRow {
+  offer_id: string;
+  platform: BrowserPlatform;
+  platform_label: string;
+  shop_name: string | null;
+  shop_type_label: string;
+  url: string;
+  sku_sync: "matched" | "variant" | "unknown";
+  sku_sync_label: string;
+  /** 规格与基准不一致时为 true：这一行照常展示，但不参与赢家评选 */
+  blocked: boolean;
+  score: number;
+  rank: number;
+  cells: DecisionCell[];
+}
+
+/** 把「买哪个平台」拆成用户能自己核对的几个维度。
+ *
+ *  跨平台比价只看公开轨（谁来看都成立的抵扣）；我的轨含账号券，
+ *  单独一列明示，不并进综合分 —— 理由见后端 app/domain/decision.py。 */
+export interface DecisionMatrixView {
+  rows: DecisionRow[];
+  weights: Record<string, number>;
+  priority: string;
+  priority_label: string;
+  notes: string[];
 }
 
 export interface ResultView {
@@ -372,6 +422,8 @@ export interface ResultView {
   origin_label: string;
   groups: GroupView[];
   recommendation: RecommendationView | null;
+  /** 每个同款商品组各一条建议；旧记录没有这个字段，只有上面那条单组的 */
+  recommendations: RecommendationView[];
   notes: string[];
   budget_exhausted: boolean;
   model_usage: ModelUsage;

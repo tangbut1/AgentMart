@@ -133,6 +133,10 @@ class ModelSignature:
     version: Optional[str] = None      # cn/hk/us/jp/eu/oversea/None
     condition: Optional[str] = None    # new/used/refurbished/None
     bundle: bool = False
+    # 规格选择器里的 SKU（颜色/尺码只在这里出现的平台很多）。
+    # 单独存而不是并进上面各字段：标题写「国行」而规格写「港版」时，
+    # 并进一个字段就分不清是谁说的了，硬冲突判定需要两边都看。
+    sku: Optional["SkuSpec"] = None
 
     @property
     def storage(self) -> Optional[str]:
@@ -168,9 +172,18 @@ def _normalize_storage(num: str, unit: str) -> str:
     return f"{num}{unit}"
 
 
-def extract_signature(title: str, brand_hint: Optional[str] = None) -> ModelSignature:
+def extract_signature(
+    title: str, brand_hint: Optional[str] = None, sku_text: Optional[str] = None
+) -> ModelSignature:
     sig = ModelSignature(brand=canonical_brand(brand_hint))
     text = title or ""
+    # 规格文本和标题一起参与签名：尺码/容量只写在规格选择器里的商品，
+    # 不读 sku_text 就认不出「黑色 L」和「蓝色 M」是两个 SKU。
+    # 延迟导入：sku.py 反向要用这边的词库
+    from .sku import parse_sku
+
+    sig.sku = parse_sku(sku_text)
+    sku = sig.sku
 
     if not sig.brand:
         for brand in KNOWN_BRANDS:
@@ -204,6 +217,8 @@ def extract_signature(title: str, brand_hint: Optional[str] = None) -> ModelSign
         value = match.group(0).strip().upper()
         if value:
             sig.sizes.add(value)
+    # 规格选择器里的尺码：标题没写尺码时，这里是唯一依据
+    sig.sizes |= sku.sizes
 
     for word in COLOR_WORDS:
         if re.search(r"(?<![A-Za-z])" + re.escape(word) + r"(?![A-Za-z])", text, re.IGNORECASE):
@@ -337,6 +352,9 @@ _HARD_FIELDS = ("version", "condition", "bundle")
 
 def hard_conflict(a: ModelSignature, b: ModelSignature) -> Optional[str]:
     """返回硬冲突说明；None 表示无硬冲突。"""
+    # 延迟导入：sku.py 要用 matching.py 的词库，这边反向用它的比对函数
+    from .sku import hard_sku_conflict
+
     if a.version and b.version and a.version != b.version:
         return "版本不同（国行/海外版混在一起）"
     if a.condition and b.condition and a.condition != b.condition:
@@ -347,7 +365,18 @@ def hard_conflict(a: ModelSignature, b: ModelSignature) -> Optional[str]:
         return f"容量不同（{a.storage} / {b.storage}）"
     if a.sizes and b.sizes and a.sizes != b.sizes:
         return f"尺码不同（{'/'.join(sorted(a.sizes))} / {'/'.join(sorted(b.sizes))}）"
+    if a.sku and b.sku:
+        conflict = hard_sku_conflict(a.sku, b.sku)
+        if conflict:
+            return conflict
     return None
+
+
+def _effective_color(sig: ModelSignature) -> Optional[str]:
+    """标题颜色优先，标题没写时取规格里的颜色。"""
+    if sig.color:
+        return sig.color
+    return sig.sku.color if sig.sku else None
 
 
 def match_score(a: ModelSignature, b: ModelSignature) -> Tuple[float, List[str]]:
@@ -388,9 +417,10 @@ def match_score(a: ModelSignature, b: ModelSignature) -> Tuple[float, List[str]]
     elif a.storage and b.storage:
         score += 0.05
 
-    if a.color and b.color and a.color != b.color:
-        reasons.append(f"颜色不同（{a.color} / {b.color}），价格可能略有差异")
-    elif a.color and b.color:
+    color_a, color_b = _effective_color(a), _effective_color(b)
+    if color_a and color_b and color_a != color_b:
+        reasons.append(f"颜色不同（{color_a} / {color_b}），价格可能略有差异")
+    elif color_a and color_b:
         score += 0.1
 
     return min(score, 1.0), reasons
@@ -402,14 +432,61 @@ class MatchGroup:
     offers: List[Offer]
     warnings: List[str]
     confidence: float
+    # 组内规格是否统一。mixed 时组内价格不可直接横向比较。
+    sku_status: str = "unknown"
 
 
 MATCH_THRESHOLD = 0.45
 
 
+def _fill_sku_sync(
+    offers: List[Offer], sigs: List[ModelSignature], warnings: List[str]
+) -> str:
+    """给每个 offer 标注它与组内基准规格的关系。
+
+    基准取组内第一个读到了规格的条目。每个 offer 的 sku_sync 是
+    matched / variant / unknown，界面据此决定这一行的价格能不能
+    和别的行直接比。
+
+    读不到规格时说 unknown，不假装一致 —— 「没读到」和「一致」
+    是两件事，混为一谈就会让用户拿两个不同规格的价格做决定。
+    """
+    from .sku import sku_relation  # 延迟导入避免循环依赖
+
+    anchor: Optional[ModelSignature] = next(
+        (s for s in sigs if s.sku and not s.sku.is_empty), None
+    )
+    anchor_spec = anchor.sku if anchor else None
+
+    statuses: List[str] = []
+    for offer, sig in zip(offers, sigs):
+        offer.sku_spec = sig.sku
+        if anchor_spec is None or sig.sku is None or sig.sku.is_empty:
+            offer.sku_sync = "unknown"
+        else:
+            offer.sku_sync = sku_relation(anchor_spec, sig.sku)
+        statuses.append(offer.sku_sync)
+
+    if "variant" in statuses:
+        distinct = {
+            s.sku.describe() for s in sigs if s.sku and not s.sku.is_empty
+        }
+        warnings.append(
+            "组内规格不一致（" + "、".join(sorted(distinct))
+            + "），各行价格对应不同规格，不能直接比大小"
+        )
+        return "mixed"
+    if all(status == "unknown" for status in statuses):
+        warnings.append("组内未读到规格信息，无法确认各行是不是同一个 SKU")
+        return "unknown"
+    return "matched"
+
+
 def group_offers(offers: List[Offer]) -> List[MatchGroup]:
     """把 offer 列表按规格签名聚成匹配组（并查集）。"""
-    signatures = [extract_signature(o.title, o.brand) for o in offers]
+    signatures = [
+        extract_signature(o.title, o.brand, o.sku_text) for o in offers
+    ]
     n = len(offers)
     parent = list(range(n))
 
@@ -440,7 +517,7 @@ def group_offers(offers: List[Offer]) -> List[MatchGroup]:
         sigs = [signatures[i] for i in members]
         warnings: List[str] = []
         # 组内两两检查软冲突
-        colors = {s.color for s in sigs if s.color}
+        colors = {c for c in (_effective_color(s) for s in sigs) if c}
         if len(colors) > 1:
             warnings.append(
                 "组内包含不同颜色：" + "、".join(sorted(colors)) + "，请按需选择"
@@ -448,6 +525,7 @@ def group_offers(offers: List[Offer]) -> List[MatchGroup]:
         brands = {canonical_brand(s.brand) for s in sigs if s.brand}
         if len(brands) > 1:
             warnings.append("组内品牌标识不一致，请人工确认")
+        sku_status = _fill_sku_sync(group_offers_list, sigs, warnings)
         confidences = [
             match_score(sigs[0], s)[0] for s in sigs[1:]
         ]
@@ -461,6 +539,7 @@ def group_offers(offers: List[Offer]) -> List[MatchGroup]:
             offers=group_offers_list,
             warnings=warnings,
             confidence=round(confidence, 3),
+            sku_status=sku_status,
         ))
 
     # 组按（有真实数据的）最低确定到手价排序

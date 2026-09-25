@@ -596,6 +596,9 @@ class AgentTask:
     updated_at: datetime = field(default_factory=datetime.now)
     canonical: List[CanonicalProduct] = field(default_factory=list)
     recommendation: Optional[Any] = None
+    # 每个同款商品组各一份建议，按 task.canonical 的顺序。旧记录里没有这个
+    # 字段，读取时按空列表处理（见 result_view）。
+    recommendations: List[Any] = field(default_factory=list)
     model_usage: Dict[str, Any] = field(default_factory=empty_model_usage)
     budget_exhausted: bool = False
     waiting_reason: Optional[str] = None
@@ -1017,6 +1020,7 @@ class ShoppingAgent:
                     offers=group.offers,
                     confidence=group.confidence,
                     warnings=list(group.warnings),
+                    sku_status=group.sku_status,
                 )
             )
         canonical.sort(
@@ -1030,9 +1034,15 @@ class ShoppingAgent:
             prefs = UserPreferences()
             if task.requirement.budget_max is not None:
                 prefs.budget_max = task.requirement.budget_max
+            # 每个同款商品组都给一份建议：以前只给排序后的第一组，
+            # 用户搜出两组同款时，第二组的建议页是空的。
             task.recommendation = serialize_recommendation(
                 recommend(canonical[0], [], prefs)
             )
+            task.recommendations = [
+                serialize_recommendation(recommend(group, [], prefs))
+                for group in canonical
+            ]
         if task.budget_exhausted:
             task.notes.append(
                 "已达到任务预算上限，已停止进一步调用；以上是已取得的证据。"
@@ -1743,6 +1753,7 @@ class ShoppingAgent:
                     "warnings": canonical.warnings,
                     "best_definite_price": money_or_none(canonical.best_definite_price),
                     "best_public_price": money_or_none(canonical.best_public_price),
+                    "sku_status": canonical.sku_status,
                     "offers": rows,
                 }
             )
@@ -1751,7 +1762,10 @@ class ShoppingAgent:
             "origin": task.origin.value,
             "origin_label": task.origin.label,
             "groups": groups,
+            # 旧记录没有 recommendations，退回空列表；recommendation 仍给第一组，
+            # 老前端继续读它不会崩。
             "recommendation": task.recommendation,
+            "recommendations": list(task.recommendations or []),
             "notes": list(task.notes),
             "budget_exhausted": task.budget_exhausted,
             "model_usage": task.model_usage,

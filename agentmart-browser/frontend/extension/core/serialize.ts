@@ -34,6 +34,7 @@ import { accountGap, offerId, publicDiscount } from "./model.ts";
 import { definiteDiscount, potentialDiscount } from "./pricing.ts";
 import { couponTreeView } from "./couponTree.ts";
 import { buildCouponTree } from "./couponTree.ts";
+import { SKU_SYNC_LABELS, describeSku, parseSku, skuSpecIsEmpty } from "./sku.ts";
 import { interpretSubsidyText, subsidyScenarios, subsidyFitLabel } from "./subsidy.ts";
 import { detectTraps, summarizeTraps, trapBasisLabel, trapSeverityLabel, worstSeverity } from "./traps.ts";
 
@@ -168,6 +169,18 @@ export interface SerializeOptions {
   userRegion?: string | null;
 }
 
+/** 规格同步状态。
+ *
+ *  与后端一致：认不出规格时说 unknown，不假装一致 —— 「没读到」和「一致」
+ *  是两件事，混为一谈就会让用户拿两个不同规格的价格做决定。
+ *  这里只做单条判断（有没有读到规格），组内比对见 grouping.ts 的
+ *  skuSyncInGroup。 */
+function skuSyncOf(offer: Offer): "matched" | "variant" | "unknown" {
+  const spec = parseSku(offer.sku_text);
+  if (skuSpecIsEmpty(spec)) return "unknown";
+  return offer.sku_sync === "unknown" ? "matched" : offer.sku_sync;
+}
+
 export function offerView(
   offer: Offer,
   breakdown: PriceBreakdown,
@@ -216,6 +229,7 @@ export function offerView(
     break;
   }
 
+  const skuSpec = describeSku(parseSku(offer.sku_text));
   return {
     id: offerId(offer),
     platform: offer.platform,
@@ -227,6 +241,11 @@ export function offerView(
     shop_type: offer.shop_type,
     shop_type_label: SHOP_TYPE_LABELS[offer.shop_type],
     sku_text: offer.sku_text,
+    sku_sync: skuSyncOf(offer),
+    sku_sync_label: SKU_SYNC_LABELS[skuSyncOf(offer)],
+    // 空规格给 null 而不是 ""：契约里这个字段是 string | null，
+    // 两侧要一致（后端 describe() 为空时给 None）
+    sku_spec: skuSpec === "" ? null : skuSpec,
     sales_text: offer.sales_text,
     list_price: money(offer.list_price),
     shipping_fee: money(offer.shipping_fee),

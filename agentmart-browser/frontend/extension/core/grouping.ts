@@ -14,6 +14,7 @@ import type { GroupView, OfferView } from "../../src/lib/browserApi.ts";
 import { computePriceBreakdown } from "./pricing.ts";
 import type { Offer } from "./model.ts";
 import { modelTokens, sharedModelTokens } from "./modelTokens.ts";
+import { parseSku, skuRelation, skuSpecIsEmpty } from "./sku.ts";
 
 // 转发出去，让 core/index.ts 的调用方继续从 grouping.ts 拿到这两个函数
 export * from "./modelTokens.ts";
@@ -90,6 +91,10 @@ export function buildCompareGroups(primary: OfferView, candidates: OfferView[]):
             100,
         ) / 100;
 
+  // 规格同步：认不出规格的说 unknown，不假装一致。颜色/尺码只写在规格
+  // 选择器里的商品，标题比对完全看不出差别，这一步是唯一的防线。
+  fillSkuSync(offers, warnings);
+
   const group: GroupView = {
     id: `${primary.platform}:${primary.id}`,
     title: primary.title,
@@ -97,11 +102,44 @@ export function buildCompareGroups(primary: OfferView, candidates: OfferView[]):
     specs,
     confidence,
     warnings,
+    sku_status: offers.every((offer) => offer.sku_sync === "matched")
+      ? "matched"
+      : offers.some((offer) => offer.sku_sync === "variant")
+        ? "mixed"
+        : "unknown",
     best_definite_price: bestDefinitePrice(offers),
     best_public_price: bestPublicPrice(offers),
     offers,
   };
   return { groups: [group], unmatched };
+}
+
+/** 给每条报价标注它与组内基准规格的关系。
+ *
+ *  基准取组内第一个读到了规格的条目，和后端 matching.py 的 _fill_sku_sync
+ *  同一个取法，这样侧面板和网页版对「谁是基准」的说法一致。 */
+function fillSkuSync(offers: OfferView[], warnings: string[]): void {
+  const specs = offers.map((offer) => parseSku(offer.sku_text));
+  const anchorIndex = specs.findIndex((spec) => !skuSpecIsEmpty(spec));
+  const anchor = anchorIndex >= 0 ? specs[anchorIndex] : null;
+
+  for (let index = 0; index < offers.length; index += 1) {
+    offers[index].sku_sync =
+      anchor === null || skuSpecIsEmpty(specs[index])
+        ? "unknown"
+        : skuRelation(anchor, specs[index]);
+  }
+
+  const distinct = new Set(
+    specs.filter((spec) => !skuSpecIsEmpty(spec)).map((spec) => spec.raw),
+  );
+  if (offers.some((offer) => offer.sku_sync === "variant")) {
+    warnings.push(
+      `组内规格不一致（${[...distinct].join("、")}），各行价格对应不同规格，不能直接比大小`,
+    );
+  } else if (offers.every((offer) => offer.sku_sync === "unknown")) {
+    warnings.push("组内未读到规格信息，无法确认各行是不是同一个 SKU");
+  }
 }
 
 /** 有没有真实的价格证据。

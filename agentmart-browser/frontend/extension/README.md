@@ -81,6 +81,7 @@ extension/
 │   ├── discount.ts          #   优惠文案解释（门槛/比例/封顶/归属层级/确定性）
 │   ├── pricing.ts           #   确定价 / 潜在价 / 待核实价 + 公开轨 / 我的轨
 │   ├── couponTree.ts        #   优惠券树：按层级摊开，标出 counted / beaten_by
+│   ├── sku.ts               #   规格解析与同步：尺码/容量/版本/成色/套装，颜色软冲突
 │   ├── subsidy.ts           #   国补：两种情形都算出来，不合并
 │   ├── traps.ts             #   防套路：激活不退、非国行、不退不换、运费险
 │   ├── grouping.ts          #   跨平台同款归组（保守匹配）
@@ -184,10 +185,11 @@ npm run test:extension      # node --test extension/tests/*.test.ts
 npm run build:extension     # tsc --noEmit + 打包（typecheck 也在这步）
 ```
 
-扩展侧 190 项单元测试 + manifest/产物校验。其中 `session.test.ts` 覆盖会话池的
+扩展侧 232 项单元测试 + manifest/产物校验。其中 `session.test.ts` 覆盖会话池的
 聚类/增删/激活/容量，`sessionFlow.test.ts` 用假的 `chrome.storage.session`
 把「内容脚本上报 → service worker 维护池子 → 侧边栏摆出对比」整条路跑通，
-不需要真开浏览器。跨语言一致性在仓库根跑：
+不需要真开浏览器。`sku.test.ts` 盯的是「标题相同但规格栏里尺码不同」这一种：
+它必须被拆成两组，而不是合成一个含价差的对比表。跨语言一致性在仓库根跑：
 
 ```bash
 cd agentmart-browser
@@ -205,6 +207,9 @@ cd agentmart-browser
 - **只支持五个平台**：京东、淘宝、天猫、拼多多、抖音商城。其它站点不会去读。
 - **跨平台同款匹配仅依据标题与规格文本**：没有品牌库、参数库的多路归一，
   认不出是同款就单独列出来并说明，不为了凑一个对比表把两件不同的商品排在一起。
+  规格只在规格选择器里、标题没写时，靠 `core/sku.ts` 补上这一路 —— 尺码/容量/
+  版本/成色/套装不同是硬冲突，颜色不同标 `variant`，一个都没读到是 `unknown`
+  （不是 `matched`）。
 - **国补永远不进"确定到手价"**：资格取决于收货地、品类、能效等级、是否已领取，
   这些都无法从商品页确认，所以两种情形都算出来让你自己对照。
 - **读不到价格就留空**：宁可少给一个数，不给一个编的数。

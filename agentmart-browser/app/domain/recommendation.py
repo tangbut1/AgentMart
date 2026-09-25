@@ -5,6 +5,9 @@
 - 只在数据足够时给出判断，数据不足时明确说明缺什么；
 - 每个推荐都附带证据、适用条件与风险；
 - 演示数据（DEMO）永远不参与推荐。
+
+跨平台比价只比公开轨（谁来看都成立的抵扣），账号券带来的差额单独
+披露、不并进排名分 —— 理由见 app/domain/decision.py 的模块说明。
 """
 from __future__ import annotations
 
@@ -12,6 +15,17 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
+from .decision import (
+    PRIORITY_LABELS,
+    PRIORITY_WEIGHTS,
+    PLATFORM_AFTER_SALES_NOTE,
+    build_matrix,
+    cheapest_on_public_track,
+    freshness_score,
+    is_fresh,
+    price_scores,
+    service_score,
+)
 from .enums import (
     CommercialRelation,
     ConditionKind,
@@ -33,81 +47,6 @@ from .models import (
 from .pricing import compute_price_breakdown
 
 STALE_AFTER = timedelta(hours=24)
-
-SHOP_SERVICE_SCORE: Dict[ShopType, float] = {
-    ShopType.SELF_OPERATED: 1.0,
-    ShopType.OFFICIAL_FLAGSHIP: 0.9,
-    ShopType.FLAGSHIP: 0.75,
-    ShopType.AUTHORIZED: 0.7,
-    ShopType.THIRD_PARTY: 0.45,
-    ShopType.UNKNOWN: 0.4,
-}
-
-PRIORITY_WEIGHTS: Dict[str, Dict[str, float]] = {
-    "price": {"price": 0.70, "service": 0.20, "freshness": 0.10},
-    "service": {"price": 0.35, "service": 0.50, "freshness": 0.15},
-    "balanced": {"price": 0.50, "service": 0.35, "freshness": 0.15},
-}
-
-PLATFORM_AFTER_SALES_NOTE = {
-    Platform.JD: "京东对自营商品提供平台级售后介入，退换货流程相对标准化",
-    Platform.TAOBAO: "淘宝售后依赖店铺承诺与平台规则，下单前需确认店铺服务",
-    Platform.TMALL: "天猫店铺受平台售后规则约束，官方旗舰店通常由品牌方履约",
-    Platform.PDD: "拼多多部分商品支持平台介入售后，具体政策以商品页面为准",
-    Platform.DOUYIN: "抖音电商售后以小店/直播间承诺为主，建议保留直播录屏等凭证",
-}
-
-_POLICY_CATEGORIES_STRONG = {"after_sales", "warranty", "authenticity"}
-
-
-def _is_fresh(offer: Offer, now: datetime) -> bool:
-    if offer.data_status != DataStatus.REAL:
-        return False
-    fetched = offer.fetched_at or offer.verified_at
-    if fetched is None:
-        return False
-    return now - fetched <= STALE_AFTER
-
-
-# 价格分按相对价差折算：与最低确定到手价相差 25% 以内线性衰减，
-# 超出则记 0 分。这样「价差小」时售后与可靠性更能影响决策，
-# 「价差大」时价格主导 —— 与用户直觉一致且可解释。
-PRICE_GAP_THRESHOLD = Decimal("0.25")
-
-
-def _price_scores(breakdowns: Dict[str, PriceBreakdown]) -> Dict[str, float]:
-    """按确定到手价归一化到 0-1（越便宜越高分）。"""
-    totals = {oid: b.definite_total for oid, b in breakdowns.items()}
-    if not totals:
-        return {}
-    lo = min(totals.values())
-    hi = max(totals.values())
-    if hi == lo:
-        return {oid: 1.0 for oid in totals}
-    scores = {}
-    for oid, total in totals.items():
-        gap = (total - lo) / lo if lo > 0 else Decimal(1)
-        scores[oid] = float(max(Decimal(0), Decimal(1) - gap / PRICE_GAP_THRESHOLD))
-    return scores
-
-
-def _service_score(offer: Offer) -> float:
-    score = SHOP_SERVICE_SCORE.get(offer.shop_type, 0.4)
-    strong = {
-        p.category.value for p in offer.policies
-        if p.data_status != DataStatus.DEMO
-    } & _POLICY_CATEGORIES_STRONG
-    if strong:
-        score = min(1.0, score + 0.08 * len(strong))
-    return score
-
-
-def _freshness_score(offer: Offer, now: datetime) -> float:
-    if offer.data_status == DataStatus.REAL:
-        return 1.0 if _is_fresh(offer, now) else 0.5
-    if offer.data_status == DataStatus.UNVERIFIED:
-        return 0.3
-    return 0.0
 
 
 def _verified_reviews(reviews: List[Review]) -> List[Review]:
@@ -145,17 +84,32 @@ def _build_option(
     score: float,
     now: datetime,
     reviews: List[Review],
+    sku_sync: str = "unknown",
 ) -> RecommendationOption:
     evidence: List[str] = []
     conditions: List[str] = []
     risks: List[str] = []
 
+    # 两个轨都写进证据：公开轨是跨平台可比的数，我的轨是这个人实际会付的数。
+    # 只写一个都会误导 —— 只写我的轨，用户没法验证这个价是不是谁都能拿到；
+    # 只写公开轨，用户会以为自己要付的比实际多。
     evidence.append(
-        f"确定到手价 ¥{breakdown.definite_total}"
+        f"公开轨到手价 ¥{breakdown.public_total}"
         f"（标价 ¥{breakdown.list_price}"
         + (f" + 运费 ¥{breakdown.shipping_fee}" if breakdown.shipping_fee else "")
-        + "，已计入无条件优惠）"
+        + "，只计谁来看都成立的抵扣）"
     )
+    gap = breakdown.account_gap
+    if gap > 0:
+        evidence.append(
+            f"我的轨到手价 ¥{breakdown.account_total}，比公开轨低 ¥{gap}"
+            " —— 来自你账号下已显示可用的券，换个账号拿不到"
+        )
+    else:
+        evidence.append(
+            f"我的轨到手价 ¥{breakdown.account_total}，与公开轨相同"
+            "（页面上没有你这个账号专属的可用抵扣）"
+        )
     if offer.shop_type != ShopType.UNKNOWN and offer.shop_name:
         evidence.append(f"店铺：{offer.shop_name}（{offer.shop_type.label}）")
     else:
@@ -163,6 +117,15 @@ def _build_option(
     evidence.append(f"数据来源：{offer.source or '未知'}，采集于 {_fmt_time(offer.fetched_at)}")
     if offer.affiliate:
         risks.append("该链接为联盟/返佣链接，平台可能获得佣金")
+    if sku_sync == "variant":
+        spec = offer.sku_spec.describe() if offer.sku_spec else ""
+        risks.append(
+            "该报价与组内基准不是同一个规格"
+            + (f"（{spec}）" if spec else "")
+            + "，价格差里含规格差异，不参与赢家评选"
+        )
+    elif sku_sync == "unknown":
+        risks.append("未读到该报价的规格信息，无法确认是不是同一个 SKU")
 
     conditional = [
         d for d in offer.discounts
@@ -184,7 +147,7 @@ def _build_option(
             "以下优惠规则无法核实，未计入到手价："
             + "、".join(d.label for d in unverifiable)
         )
-    if not _is_fresh(offer, now):
+    if not is_fresh(offer, now):
         risks.append("价格数据不是最新采集，下单前请以商品页面实时价格为准")
     if offer.shop_type in (ShopType.THIRD_PARTY, ShopType.UNKNOWN):
         risks.append("第三方店铺货源与售后依赖店铺自身承诺，建议优先平台官方渠道")
@@ -233,18 +196,23 @@ def recommend(
         return result
 
     breakdowns = {o.id: compute_price_breakdown(o) for o in real_offers}
-    price_scores = _price_scores(breakdowns)
+    # 排名分与决策矩阵同一套口径：公开轨 + 服务 + 新鲜度。
+    # 规格不一致的报价照常展示，但不参与赢家评选 —— 以矩阵算出的
+    # blocked 为准，不另读 offer.sku_sync，避免两处口径不一致。
+    result.matrix = build_matrix(real_offers, breakdowns, prefs.priority, now)
+    blocked_ids = {row["offer_id"] for row in result.matrix["rows"] if row["blocked"]}
+    sku_sync_by_id = {row["offer_id"]: row["sku_sync"] for row in result.matrix["rows"]}
+    p_scores = price_scores(breakdowns)
     weights = PRIORITY_WEIGHTS.get(prefs.priority, PRIORITY_WEIGHTS["balanced"])
 
+    eligible = [o for o in real_offers if o.id not in blocked_ids] or real_offers
+
     scored: List[Tuple[Offer, float]] = []
-    for offer in real_offers:
-        p_score = price_scores.get(offer.id, 0.0)
-        s_score = _service_score(offer)
-        f_score = _freshness_score(offer, now)
+    for offer in eligible:
         total = (
-            weights["price"] * p_score
-            + weights["service"] * s_score
-            + weights["freshness"] * f_score
+            weights["price"] * p_scores.get(offer.id, 0.0)
+            + weights["service"] * service_score(offer)
+            + weights["freshness"] * freshness_score(offer, now)
         )
         if prefs.budget_max is not None:
             if breakdowns[offer.id].definite_total > prefs.budget_max:
@@ -259,24 +227,26 @@ def recommend(
         best_offer, breakdowns[best_offer.id], "best_overall", best_score, now, reviews
     ))
 
-    # 更省钱：确定到手价最低（若与首选不同）
-    cheapest = min(real_offers, key=lambda o: breakdowns[o.id].definite_total)
-    if cheapest.id != best_offer.id:
+    # 更省钱：公开轨最低（若与首选不同）
+    cheapest = cheapest_on_public_track(eligible, breakdowns)
+    if cheapest is not None and cheapest.id != best_offer.id:
         result.options.append(_build_option(
-            cheapest, breakdowns[cheapest.id], "cheapest", best_score * 0.95, now, reviews
+            cheapest, breakdowns[cheapest.id], "cheapest", best_score * 0.95, now, reviews,
+            sku_sync_by_id[cheapest.id],
         ))
 
     # 更稳妥：服务分最高
-    safest = max(real_offers, key=lambda o: (_service_score(o), -breakdowns[o.id].definite_total))
-    if safest.id not in {best_offer.id, cheapest.id}:
+    safest = max(eligible, key=lambda o: (service_score(o), -breakdowns[o.id].definite_total))
+    if safest.id not in {best_offer.id, cheapest.id if cheapest else ""}:
         result.options.append(_build_option(
-            safest, breakdowns[safest.id], "safest", best_score * 0.9, now, reviews
+            safest, breakdowns[safest.id], "safest_service", best_score * 0.9, now, reviews,
+            sku_sync_by_id[safest.id],
         ))
 
     # 汇总与置信度
     verified_reviews = _verified_reviews(reviews)
     real_ratio = len(real_offers) / max(1, len(canonical.offers))
-    fresh_ratio = sum(1 for o in real_offers if _is_fresh(o, now)) / len(real_offers)
+    fresh_ratio = sum(1 for o in real_offers if is_fresh(o, now)) / len(real_offers)
     confidence = round(
         0.55 * real_ratio + 0.30 * fresh_ratio + 0.15 * min(1.0, len(verified_reviews) / 2),
         3,
@@ -291,20 +261,33 @@ def recommend(
         result.missing_data.append("部分价格数据采集时间较久，新鲜度不足")
     if canonical.offers and any(o.data_status == DataStatus.DEMO for o in canonical.offers):
         result.missing_data.append("该结果包含演示数据，已从推荐中排除")
+    if blocked_ids:
+        result.missing_data.append("组内存在规格不一致的报价，未纳入赢家评选")
+    if any(row["sku_sync"] == "unknown" for row in result.matrix["rows"]):
+        result.missing_data.append("部分报价未读到规格，无法确认是否同一个 SKU")
 
-    diff = breakdowns[cheapest.id].definite_total - breakdowns[best_offer.id].definite_total
-    if diff > 0 and cheapest.id != best_offer.id:
+    # 汇总里同时给两个轨的数：用户实际会付的是我的轨，
+    # 跨平台可比的公开轨也写明，避免拿账号券当平台优势。
+    best_breakdown = breakdowns[best_offer.id]
+    priority_note = PRIORITY_LABELS.get(prefs.priority, prefs.priority)
+    if cheapest is not None and cheapest.id != best_offer.id:
+        diff = breakdowns[cheapest.id].public_total - best_breakdown.public_total
         result.summary = (
-            f"综合价格、售后与数据可信度，首选 {best_offer.platform.label}"
-            f"（{best_offer.shop_name or '店铺待核实'}），确定到手价 "
-            f"¥{breakdowns[best_offer.id].definite_total}；"
-            f"若只想最低价，{cheapest.platform.label}可再省 ¥{diff}，"
-            f"但需接受其售后与货源条件（见风险说明）。"
+            f"按「{priority_note}」加权公开轨价格、店铺售后与数据新鲜度，首选 "
+            f"{best_offer.platform.label}（{best_offer.shop_name or '店铺待核实'}），"
+            f"公开轨到手 ¥{best_breakdown.public_total}"
+            + (f"，用上你账号里的券后实付 ¥{best_breakdown.account_total}"
+               if best_breakdown.account_gap > 0 else "")
+            + f"；若只想最低价，{cheapest.platform.label}公开轨可再省 ¥{diff}，"
+            "但需接受其售后与货源条件（见风险说明）。"
         )
     else:
         result.summary = (
-            f"综合价格、售后与数据可信度，首选 {best_offer.platform.label}"
-            f"（{best_offer.shop_name or '店铺待核实'}），确定到手价 "
-            f"¥{breakdowns[best_offer.id].definite_total}，且它同时是当前价格最低的可核验选项。"
+            f"按「{priority_note}」加权公开轨价格、店铺售后与数据新鲜度，首选 "
+            f"{best_offer.platform.label}（{best_offer.shop_name or '店铺待核实'}），"
+            f"公开轨到手 ¥{best_breakdown.public_total}"
+            + (f"，用上你账号里的券后实付 ¥{best_breakdown.account_total}"
+               if best_breakdown.account_gap > 0 else "")
+            + "，且它同时是公开轨最低的可核验选项。"
         )
     return result

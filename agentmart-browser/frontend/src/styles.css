@@ -1427,6 +1427,28 @@ button.chip[aria-pressed="true"] {
   background: var(--primary);
 }
 
+/* ─── 决策矩阵（阶段四） ─────────────────────────────────── */
+
+.matrix-cell__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* 规格与基准不一致的行：照常展示，但整行降噪 —— 用户扫过去时
+   不会把它当成可比的报价，同时又不会因为藏起来而漏掉它。 */
+.matrix-row--blocked {
+  background: var(--surface-sunken);
+}
+
+.matrix-row--blocked .matrix-cell__value {
+  font-weight: 500;
+}
+
+.matrix-row--blocked:hover {
+  background: var(--surface-hover);
+}
+
 /* ─── 购买卡片（个人浏览器版） ───────────────────────────── */
 
 .purchase-card {

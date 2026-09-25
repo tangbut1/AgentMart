@@ -41,10 +41,12 @@ app/domain/
   pricing.py       到手价拆解：确定/潜在/待核验 + 公开轨/我的轨
   stacking.py      优惠互斥：同层取最优，不同层可叠加
   coupontree.py    优惠券树：按归属层级摊开，标出 counted / beaten_by
+  sku.py           规格解析与同步：尺码/容量/版本/成色/套装硬冲突，颜色软冲突
+  decision.py      决策矩阵：分维度打分（只用公开轨比价）、权重、规格不符折损
   models.py        Offer / Discount（layer、certainty）/ CanonicalProduct / Review
   matching.py      同款匹配与规格硬冲突
 app/routers/browser.py   /api/browser/* 接口
-frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|CouponTreePanel
+frontend/src/pages/Browser*.tsx + components/PurchaseCard|BrowserCompare|CouponTreePanel|DecisionMatrix|RecommendPanel
 frontend/extension/core/  与 app/domain 逐字段对应的 TS 实现（扩展与网页共用）
 ```
 
@@ -59,8 +61,9 @@ frontend/extension/core/  与 app/domain 逐字段对应的 TS 实现（扩展�
   → group_offers（同款匹配，规格冲突不合并）
   → compute_price_breakdown（确定 / 潜在 / 待核验三档 + 公开轨 / 我的轨）
   → build_coupon_tree（按归属层级摊开，标出同层互斥与两轨归属）
-  → recommend（综合首选 / 更省钱 / 更稳妥）
-  → result_view → 前端购买卡片 + 横向对比 + 购买建议
+  → build_matrix（分维度打分，只用公开轨比价，规格不符折损）
+  → recommend（综合首选 / 更省钱 / 更稳妥 + 每个商品组各一份）
+  → result_view → 前端购买卡片 + 横向对比 + 购买建议 + 决策矩阵
 ```
 
 ---
@@ -124,6 +127,32 @@ frontend/extension/core/  与 app/domain 逐字段对应的 TS 实现（扩展�
 层级不明时（既没有 `stack_group` 也没有 `layer`）不进互斥组、单独成立 ——
 这是唯一安全的默认，不会把两张券当成可叠加。浏览器版 `build_offer` 一定会填 `layer`，
 所以那条保守路径在扩展侧不可达（`test_browser_offer_always_sets_a_layer` 盯着这件事）。
+
+### 规格同步与决策矩阵
+
+**标题相同不等于同一个 SKU。** 尺码/容量只写在规格选择器里、标题里不写，是各平台的
+常见写法。只按标题归组会把「黑色 L」和「蓝色 M」并成一组，界面上出现一个其实来自
+规格差的价差。因此 `app/domain/sku.py`（前端镜像 `frontend/extension/core/sku.ts`）
+把规格文本和标题一起送进比对：
+
+- 尺码、容量、版本（国行/海外）、成色（全新/二手）、套装与单品不同 → **硬冲突，拆组**；
+- 颜色不同 → 不拆组，但标注 `variant`，界面上写明颜色不同；
+- 归一化后相同（`曜石黑 L码` ≡ `黑色 L`）→ `matched`，不该被拆开；
+- 一个规格都没读到 → `unknown`，**不是** `matched`。读不到和一致是两件事。
+
+每条报价带 `sku_sync` / `sku_spec`，商品组带 `sku_status`。组内基准取第一个读到
+规格的报价，Python 与 TS 取法一致（`matching._fill_sku_sync` ↔ `grouping.fillSkuSync`）。
+
+`app/domain/decision.py` 的决策矩阵把「买哪个平台」拆成公开轨到手、我的轨到手、
+店铺与售后、数据新鲜度、规格同步、综合分六列，每格给值和一句解释。两条硬规则：
+
+1. **综合分只用公开轨。** 我的轨含账号券，换个账号就没了，拿它排名排出来的是账号运气。
+2. **规格不符的报价不能当赢家。** 照常展示，但 `SKU_VARIANT_PENALTY = 0.5` 折损分数
+   并标注原因 —— 否则用户按矩阵下单会买到另一个规格。
+
+矩阵自己解析 `sku_text`、自己和基准比，不依赖调用方先跑过 `group_offers`：
+少接一步就全变成「未读到规格」这个坑踩过一次（`test_sku_variant_offer_cannot_win_the_matrix`
+就是那时候红的）。
 
 ---
 
@@ -225,21 +254,27 @@ frontend/extension/core/  与 app/domain 逐字段对应的 TS 实现（扩展�
 ## 10. 测试怎么跑、覆盖了什么
 
 ```bash
-python -m pytest                       # 351 passed（含 5 个真实 Chromium 端到端用例）
+python -m pytest                       # 366 passed（含 6 个真实 Chromium 端到端用例）
 cd frontend && npm run build           # tsc --noEmit && vite build
-cd frontend && npm run test:extension  # 216 passed（领域逻辑与扩展）
+cd frontend && npm run test:extension  # 232 passed（领域逻辑与扩展）
 cd frontend && npm run build:extension # MV3 扩展打包
 ```
 
 重点用例：
 
 - 规格硬冲突不合并（容量/版本/成色/套装/品牌/尺码）；
+- **规格只在规格栏里时也拆组**：标题完全相同、只有 `sku_text` 里尺码不同的两条报价
+  必须分成两个商品组，不能合成一个含 30 元"价差"的对比表
+  （`tests/test_sku.py`，端到端 `test_sku_and_matrix_reach_the_http_result`
+  用真实 Chromium 断言分成两组）；
 - 优惠门槛、互斥组、叠加、过期、运费、国补资格不确定；
 - **同层互斥**：两张同层店铺券只算金额最高的那张，被挤掉的仍列在树上并写明被谁挤掉
   （端到端用例 `test_same_layer_coupons_and_dual_track_flow_through_real_chromium`
   用真实 Chromium 断言到手价是 1179.00，不是把两张券都减掉的 1169.00）；
 - **双轨净价**：公开轨只算谁来看都成立的抵扣，账号券只进我的轨，
   跨平台比价用 `best_public_price`；
+- **决策矩阵**：综合分只用公开轨（账号券带来的差异不进分）；规格不符的报价
+  分数折损且不参与赢家评选；每个商品组各一份建议，不是整个任务只给第一条；
 - Python 与 TypeScript 两侧价格逻辑用同一份语料逐字段比对
   （`tests/test_extension_parity.py` ↔ `frontend/extension/tests/corpus/page-fields.json`）；
 - 视觉金额与 DOM 证据不一致时被拦截；无 DOM 证据的视觉价格会被降级；

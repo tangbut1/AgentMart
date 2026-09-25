@@ -9,6 +9,13 @@ const CONDITION_TONE: Record<string, "ok" | "warn" | "danger"> = {
   unverifiable: "danger",
 };
 
+/** 规格同步色调。variant 用 danger：这一行的价格对应另一个规格。 */
+const SKU_TONE: Record<string, "ok" | "warn" | "danger" | "muted"> = {
+  matched: "ok",
+  variant: "danger",
+  unknown: "warn",
+};
+
 // 防套路：买前必须先确认的用 danger，明显影响决策的用 warn，
 // 页面没显示的（那只是"没看到"）用 muted —— 视觉上就要分出
 // "页面写了"和"页面没写"两种证据强度。
@@ -47,7 +54,16 @@ export default function PurchaseCard({ offer }: { offer: OfferView }) {
               {offer.title}
             </a>
           </h3>
-          {offer.sku_text && <div className="small muted">规格：{offer.sku_text}</div>}
+          {offer.sku_text && (
+            <div className="row gap-8 wrap">
+              <span className="small muted">规格：{offer.sku_text}</span>
+              {/* 卡片是单平台视角，这里说的是「这条报价自己的规格读到了没有」；
+                  和别平台是不是同一个 SKU，看横向对比表那一列的标注。 */}
+              <Badge tone={SKU_TONE[offer.sku_sync] ?? "muted"} title={offer.sku_sync_label}>
+                {offer.sku_sync_label}
+              </Badge>
+            </div>
+          )}
         </div>
         <div className="purchase-card__price">
           <div className="small muted">我的轨到手</div>

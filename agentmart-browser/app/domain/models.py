@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .enums import (
     CommercialRelation,
@@ -204,6 +204,10 @@ class Offer:
     # 匹配信息（由匹配层填充）
     match_confidence: Optional[float] = None
     match_notes: List[str] = field(default_factory=list)
+    # SKU 规格同步：这一行的价格对应哪个规格，与组内基准是不是同一个 SKU。
+    # sku_sync 取值 matched / variant / unknown，由 app/domain/matching.py 填。
+    sku_spec: Optional[Any] = None
+    sku_sync: str = "unknown"
     affiliate: bool = False                  # 是否联盟/返佣链接
 
     @property
@@ -227,6 +231,9 @@ class CanonicalProduct:
     offers: List[Offer] = field(default_factory=list)
     confidence: float = 1.0
     warnings: List[str] = field(default_factory=list)
+    # 组内规格是否统一：matched / mixed / unknown（由 matching 层填）。
+    # mixed 时各行价格对应不同规格，横向对比不能直接比大小。
+    sku_status: str = "unknown"
 
     @property
     def best_definite_price(self) -> Optional[Decimal]:
@@ -332,6 +339,9 @@ class Recommendation:
     confidence: float = 0.0
     missing_data: List[str] = field(default_factory=list)
     generated_at: Optional[datetime] = None
+    # 决策矩阵（见 app/domain/decision.py）。序列化后的 dict，
+    # 前端按 rows/cells 直接渲染，不在前端重算任何分数。
+    matrix: Dict[str, Any] = field(default_factory=dict)
 
 
 # 延迟导入避免循环依赖

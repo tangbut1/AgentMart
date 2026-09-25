@@ -2,6 +2,16 @@ import { type GroupView } from "../lib/browserApi";
 import { formatDateTime } from "../lib/format";
 import { Badge, Notice } from "./ui";
 
+/** 规格同步状态 → 徽章色调。
+ *
+ *  variant 用 danger：这不是「信息不全」，是「这一行根本不能和别行比大小」，
+ *  和「没读到规格」（warn）在证据强度上是两件事，不能都画成黄色。 */
+const SKU_TONE: Record<string, "ok" | "warn" | "danger" | "muted"> = {
+  matched: "ok",
+  variant: "danger",
+  unknown: "warn",
+};
+
 /** 同规格横向对比：先确认是不是同一款，再比价。 */
 export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
   if (groups.length === 0) {
@@ -40,6 +50,7 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                 <thead>
                   <tr>
                     <th>平台 / 店铺</th>
+                    <th>规格</th>
                     <th>标价</th>
                     <th>公开轨到手</th>
                     <th>我的轨到手</th>
@@ -57,6 +68,16 @@ export default function BrowserCompare({ groups }: { groups: GroupView[] }) {
                         <span className={`plat-dot plat-dot--${offer.platform}`} aria-hidden="true" />
                         {offer.platform_label}
                         <div className="table-cell-sub">{offer.shop_name ?? "—"}</div>
+                      </td>
+                      <td data-label="规格">
+                        {/* 规格不一致时，这一行的价格对应的是另一个规格。
+                            不标出来的话，用户会把 200 元的价差当成平台差价。 */}
+                        <Badge tone={SKU_TONE[offer.sku_sync] ?? "muted"}>
+                          {offer.sku_sync_label}
+                        </Badge>
+                        <div className="table-cell-sub">
+                          {offer.sku_spec ?? offer.sku_text ?? "页面未读到规格"}
+                        </div>
                       </td>
                       <td className="num" data-label="标价">
                         {offer.breakdown.list_price || "—"}

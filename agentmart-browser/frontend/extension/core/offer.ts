@@ -168,6 +168,7 @@ export function buildOffer(
     ),    affiliate: options.affiliate === true,
     match_confidence: null,
     match_notes: [],
+    sku_sync: "unknown",
   };
 
   if (listPrice === null) {

@@ -30,6 +30,13 @@ _CERTAINTY_ORDER = [
     PriceCertainty.PREPAYMENT,
 ]
 
+# 规格同步状态。标签由后端给，前端不自己翻译（与优惠券树同一约定）。
+SKU_SYNC_LABELS = {
+    "matched": "规格一致",
+    "variant": "规格不同",
+    "unknown": "未读到规格",
+}
+
 
 def certainty_of(offer: Offer) -> Dict[str, Any]:
     """价格确定性：取该商品上已识别到的最高档位。
@@ -159,13 +166,38 @@ def _category_label(category: PolicyCategory) -> str:
     }[category]
 
 
+def _sku_spec_of(offer: Offer):
+    """解析这条报价的规格。
+
+    匹配层跑过 group_offers 时它会填好 offer.sku_spec；单条序列化
+    （对跑语料、侧面板读当前页）时那边还没跑，这里自己解析，两条路
+    结论一致。
+    """
+    from ..domain.sku import parse_sku
+
+    return offer.sku_spec or parse_sku(offer.sku_text)
+
+
+def _sku_sync_of(offer: Offer) -> str:
+    """单条报价的规格同步状态。
+
+    只回答「读没读到规格」：组内比对要和其他报价一起做，单条做不到。
+    读不到就说 unknown，不假装一致 —— 「没读到」和「一致」是两件事，
+    混为一谈就会让用户拿两个不同规格的价格做决定。
+    """
+    spec = _sku_spec_of(offer)
+    if spec.is_empty:
+        return "unknown"
+    return offer.sku_sync if offer.sku_sync != "unknown" else "matched"
+
+
 def offer(
     offer: Offer, breakdown: PriceBreakdown, user_region: Optional[str] = None
 ) -> Dict[str, Any]:
     """一张购买卡片需要的全部字段。
 
     ``user_region`` 是用户自己填写的收货地，只用于判断补贴文案里写明的
-    地区限制和它对不对得上 —— 不替用户认定补贴资格。
+    地区限制和它对不上 —— 不替用户认定补贴资格。
     """
     traps = detect_traps(
         [p.title for p in offer.policies],
@@ -233,6 +265,11 @@ def offer(
         "is_demo": offer.data_status == DataStatus.DEMO,
         "match_confidence": offer.match_confidence,
         "match_notes": list(offer.match_notes or []),
+        "sku_sync": _sku_sync_of(offer),
+        "sku_sync_label": SKU_SYNC_LABELS.get(_sku_sync_of(offer), "未读到规格"),
+        # 自己解析 sku_text，不依赖调用方先跑过 group_offers：单条序列化
+        # （对跑语料、侧面板读当前页）时 offer.sku_spec 还是 None。
+        "sku_spec": _sku_spec_of(offer).describe() or None,
     }
 
 
@@ -261,6 +298,7 @@ def recommendation(rec: Recommendation) -> Dict[str, Any]:
             }
             for o in rec.options
         ],
+        "matrix": dict(rec.matrix) if rec.matrix else None,
     }
 
 

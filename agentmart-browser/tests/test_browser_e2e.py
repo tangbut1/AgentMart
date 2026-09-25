@@ -439,3 +439,110 @@ def test_same_layer_coupons_and_dual_track_flow_through_real_chromium(client):
         assert any("叠加" in note for note in tree["notes"])
         assert any("未登录时拿不到" in note for note in tree["notes"])
 
+
+def test_sku_and_matrix_reach_the_http_result(client):
+    """阶段三（规格同步）和阶段四（决策矩阵）必须真的走到 HTTP 结果里。
+
+    夹具里放两条**标题完全相同、只有规格选择器里尺码不同**的报价 ——
+    这正是真实平台的常见写法（标题省事，尺码在规格栏里选）。标题比对
+    完全看不出差别，只有读了 sku_text 才能认出这是两个 SKU。
+    """
+    spec = FixtureSpec(
+        products=(
+            FixtureProduct(
+                id="1001001",
+                # 标题里不写尺码，尺码只出现在页面的规格栏
+                title="探路者 三合一冲锋衣 男 防雨透气 TAWJ91717",
+                price="899.00",
+                color="黑色",
+                size="L",
+            ),
+            FixtureProduct(
+                id="1001002",
+                title="探路者 三合一冲锋衣 男 防雨透气 TAWJ91717",
+                price="929.00",
+                color="黑色",
+                size="XL",
+                shop="示例自营旗舰店",
+            ),
+        )
+    )
+    with FixtureServer(spec) as server:
+        base = server.base_url
+        service.agent.set_driver_factory(_playwright_factory(base))
+
+        created = client.post(
+            "/api/browser/tasks",
+            json={
+                "text": "预算 500～800 元，买一件适合日常通勤的冲锋衣",
+                "platforms": ["jd"],
+                "options": {
+                    "max_candidates": 3,
+                    "ask_review_question": False,
+                    "origin": "test_fixture",
+                    "headless": True,
+                    "url_overrides": {
+                        "jd.home": f"{base}/jd/home.html",
+                        "jd.search": f"{base}/jd/search.html",
+                    },
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        assert client.post(f"/api/browser/tasks/{task_id}/start").status_code == 200
+
+        final = _wait_terminal(client, task_id)
+        assert final["summary_status"] == "completed", final["notes"]
+
+        result = client.get(f"/api/browser/tasks/{task_id}/result").json()
+        groups = result["groups"]
+
+        # 阶段三：尺码只在规格栏里，也必须分成两组。
+        # 合成一组的话，界面上会出现一个 30 元的"平台价差"，
+        # 而那 30 元其实是 L 和 XL 的规格差。
+        assert len(groups) == 2, (
+            f"尺码只在规格栏里时也必须拆开：{[g['title'] for g in groups]}"
+        )
+
+        for group in groups:
+            offer = group["offers"][0]
+            assert offer["sku_sync"] in ("matched", "variant", "unknown")
+            assert offer["sku_sync_label"], "规格同步必须给中文标签"
+            # 页面确实读到了规格：两条都是「黑色 + 尺码」
+            assert offer["sku_spec"], f"规格没读到：{offer['sku_text']!r}"
+
+        # 每个商品组一条建议，而不是整个任务只给第一条
+        assert len(result["recommendations"]) == len(groups)
+
+        # 阶段四：每条建议都带决策矩阵
+        matrix = result["recommendations"][0]["matrix"]
+        assert matrix, "建议里必须带决策矩阵"
+        assert len(matrix["rows"]) == 1
+        row = matrix["rows"][0]
+
+        cell_keys = [cell["key"] for cell in row["cells"]]
+        assert "public_total" in cell_keys, "矩阵必须单列公开轨"
+        assert "account_total" in cell_keys, "矩阵必须单列我的轨"
+        assert "sku_sync" in cell_keys, "矩阵必须单列规格同步"
+        assert "service" in cell_keys
+        assert "freshness" in cell_keys
+        assert "score" in cell_keys
+
+        # 综合分按公开轨算，不是按账号券 —— 否则排名比的是账号不是商品
+        public_cell = next(c for c in row["cells"] if c["key"] == "public_total")
+        account_cell = next(c for c in row["cells"] if c["key"] == "account_total")
+        assert "谁来看都成立" in public_cell["note"]
+        assert "账号" in account_cell["note"]
+        assert float(public_cell["value"]) > 0
+
+        # 权重与说明必须一起给出来，用户才能自己核对并改权重
+        assert matrix["weights"], "矩阵必须给权重"
+        assert set(matrix["weights"]) == {"price", "service", "freshness"}
+        assert matrix["priority_label"]
+        assert matrix["notes"], "矩阵必须给说明"
+
+        # 排名从 1 开始，按分数降序
+        for index, ranked in enumerate(matrix["rows"], start=1):
+            assert ranked["rank"] == index
+

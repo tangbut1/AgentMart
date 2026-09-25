@@ -125,6 +125,8 @@ export interface Offer {
   affiliate: boolean;
   match_confidence: number | null;
   match_notes: string[];
+  /** 与组内基准规格的关系。matched / variant / unknown，由匹配层填 */
+  sku_sync: "matched" | "variant" | "unknown";
 }
 
 export function offerId(offer: Offer): string {

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import BrowserCompare from "../components/BrowserCompare";
 import BrowserPlatformCard from "../components/BrowserPlatformCard";
-import BrowserRecommendation from "../components/BrowserRecommendation";
 import PurchaseCard from "../components/PurchaseCard";
+import RecommendPanel from "../components/RecommendPanel";
 import { Badge, Icon, Notice, Segmented, Skeleton } from "../components/ui";
 import {
   browserApi,
@@ -347,8 +347,9 @@ export default function BrowserTaskPage() {
             {tab === "compare" && <BrowserCompare groups={result.groups} />}
 
             {tab === "recommend" && (
-              <BrowserRecommendation
-                recommendation={result.recommendation}
+              <RecommendPanel
+                groups={result.groups}
+                recommendations={result.recommendations ?? []}
                 originLabel={result.origin_label}
               />
             )}

@@ -46,6 +46,7 @@ function offer(...discounts: Discount[]): Offer {
     affiliate: false,
     match_confidence: null,
     match_notes: [],
+    sku_sync: "unknown",
   };
 }
 
